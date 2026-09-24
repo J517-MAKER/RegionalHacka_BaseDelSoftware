@@ -17,6 +17,12 @@ PHRASES = [
     ('quiero ver el folio 184', 'OPEN_CASE', {'folio': '184'}),
     ('abre el caso BUS-2026-0184', 'OPEN_CASE', {'folio': '184'}),
     ('oye, búscame por favor el folio 184', 'OPEN_CASE', {'folio': '184'}),
+    # Un folio se dice casi siempre con letras, y el reconocedor lo escribe con letras.
+    ('ábreme el folio ciento ochenta y cuatro', 'OPEN_CASE', {'folio': '184'}),
+    ('abre el 184', 'OPEN_CASE', {'folio': '184'}),
+    # Palabras clave que el micrófono deforma: la orden se reconoce igual.
+    ('abre el volio 184', 'OPEN_CASE', {'folio': '184'}),
+    ('muéstrame el expdiente 184', 'OPEN_CASE', {'folio': '184'}),
     ('muéstrame la última detección del folio 184', 'SHOW_LAST_DETECTION', {'folio': '184'}),
     ('¿dónde se detectó por última vez el caso 184?', 'SHOW_LAST_DETECTION', {'folio': '184'}),
     ('muéstrame las coincidencias del folio 184', 'SHOW_MATCHES', {'folio': '184'}),
@@ -24,6 +30,7 @@ PHRASES = [
     ('muéstrame la cámara 8', 'OPEN_CAMERA', {'camera': 'CAM-008'}),
     ('abre CAM-008', 'OPEN_CAMERA', {'camera': 'CAM-008'}),
     ('abre la cámara ocho', 'OPEN_CAMERA', {'camera': 'CAM-008'}),
+    ('abre la cámara número 8', 'OPEN_CAMERA', {'camera': 'CAM-008'}),
     ('muéstrame las alertas pendientes', 'SHOW_PENDING_ALERTS', {}),
     ('abre las alertas de hoy', 'SHOW_ALERTS', {}),
     ('busca a María López', 'SEARCH_PERSON', {'person': 'maria lopez'}),
@@ -74,7 +81,7 @@ class AssistantTest(unittest.TestCase):
     def test_last_detection_matches_and_camera(self):
         last = handle_command('muéstrame la última detección del folio 184')
         self.assertEqual(last['status'], 'SUCCESS')
-        self.assertIn('CAM-012', last['detail'])
+        self.assertIn('CAM-008', last['detail'])  # la última de su trayecto entre las cámaras del equipo
         self.assertIn('10:25:41', last['detail'])
         self.assertIn('case_id=BUS-2026-0184', last['route'])
 

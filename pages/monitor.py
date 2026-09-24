@@ -1,5 +1,6 @@
 # pyrefly: ignore [missing-import]
 from nicegui import ui
+import config
 from components.layout import PageLayout, Panel, guard_page
 from components.map_view import MapView, update_map
 from components.activity_log import ActivityLog
@@ -19,59 +20,7 @@ def monitor_page():
     with PageLayout('/monitor', 'Centro de monitoreo',
                     'Supervisión de búsquedas, cámaras y eventos pendientes de revisión.'):
 
-        # ── Inject vibrant monitor-specific styles ──────────────────────
         ui.add_css("""
-        .monitor-stat-strip {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 16px;
-        }
-        .monitor-stat-card {
-            background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
-            border: 1px solid rgba(0,240,255,0.12);
-            border-radius: 14px;
-            padding: 20px;
-            position: relative;
-            overflow: hidden;
-            transition: all 0.3s cubic-bezier(0.4,0,0.2,1);
-        }
-        .monitor-stat-card:hover {
-            border-color: rgba(0,240,255,0.3);
-            box-shadow: 0 8px 32px rgba(0,0,0,0.3), 0 0 20px rgba(0,240,255,0.08);
-            transform: translateY(-2px);
-        }
-        .monitor-stat-card::before {
-            content: '';
-            position: absolute;
-            top: 0; left: 0;
-            width: 100%; height: 3px;
-            border-radius: 14px 14px 0 0;
-        }
-        .monitor-stat-card:nth-child(1)::before { background: linear-gradient(90deg, #00F0FF, #0088FF); }
-        .monitor-stat-card:nth-child(2)::before { background: linear-gradient(90deg, #22D3EE, #06B6D4); }
-        .monitor-stat-card:nth-child(3)::before { background: linear-gradient(90deg, #FFB800, #FF8C00); }
-        .monitor-stat-card:nth-child(4)::before { background: linear-gradient(90deg, #FF3D71, #FF006E); }
-        .monitor-stat-value {
-            font-size: 32px;
-            font-weight: 700;
-            letter-spacing: -0.5px;
-            line-height: 1;
-        }
-        .monitor-stat-card:nth-child(1) .monitor-stat-value { color: #00F0FF; text-shadow: 0 0 20px rgba(0,240,255,0.3); }
-        .monitor-stat-card:nth-child(2) .monitor-stat-value { color: #22D3EE; text-shadow: 0 0 20px rgba(34,211,238,0.3); }
-        .monitor-stat-card:nth-child(3) .monitor-stat-value { color: #FFB800; text-shadow: 0 0 20px rgba(255,184,0,0.3); }
-        .monitor-stat-card:nth-child(4) .monitor-stat-value { color: #FF3D71; text-shadow: 0 0 20px rgba(255,61,113,0.3); }
-        .monitor-stat-label {
-            font-size: 13px;
-            font-weight: 600;
-            color: #E2E8F0;
-            margin-top: 8px;
-        }
-        .monitor-stat-detail {
-            font-size: 11px;
-            color: #64748B;
-            margin-top: 2px;
-        }
         .monitor-map-header {
             background: linear-gradient(90deg, rgba(0,240,255,0.05), transparent);
             border-bottom: 1px solid rgba(0,240,255,0.1);
@@ -108,27 +57,34 @@ def monitor_page():
             cases, cameras = get_active_cases(), get_cameras()
             pending = sum(m.status in ('Pendiente de validación', 'En revisión') for m in get_matches())
             alerts = sum(e.review_status in ('PENDIENTE_REVISION', 'EN_REVISION') for e in get_evidence())
-            with ui.element('div').classes('monitor-stat-strip'):
-                for value, label, detail in [
-                    (len(cases), 'Casos activos', 'Búsquedas en curso'),
+            # El mismo indicador que el resto de la aplicación; sólo lo pendiente toma color (el de
+            # los avisos del encabezado) y cada uno lleva a su página.
+            with ui.element('div').classes('stat-strip'):
+                for value, label, detail, target, tone in [
+                    (len(cases), 'Casos activos', 'Búsquedas en curso', '/cases', ''),
                     (f'{sum(c.status != "Desconectada" for c in cameras)}/{len(cameras)}',
-                     'Cámaras conectadas', 'Red de demostración'),
-                    (pending, 'Coincidencias pendientes', 'Requieren validación humana'),
-                    (alerts, 'Evidencia por revisar', 'Posibles solicitudes de auxilio'),
+                     'Cámaras conectadas', 'Red de demostración', '/cameras', ''),
+                    (pending, 'Coincidencias pendientes', 'Requieren validación humana', '/matches',
+                     'matches' if pending else ''),
+                    (alerts, 'Evidencia por revisar', 'Posibles solicitudes de auxilio', '/alerts',
+                     'distress' if alerts else ''),
                 ]:
-                    with ui.element('div').classes('monitor-stat-card'):
-                        ui.label(str(value)).classes('monitor-stat-value')
-                        ui.label(label).classes('monitor-stat-label')
-                        ui.label(detail).classes('monitor-stat-detail')
+                    with ui.link(target=target).classes('stat-item stat-link'):
+                        ui.label(str(value)).classes(f'stat-value {tone}')
+                        with ui.column().classes('gap-0'):
+                            ui.label(label).classes('stat-label')
+                            ui.label(detail).classes('stat-detail')
 
         @ui.refreshable
         def camera_tiles():
             cameras = get_cameras()
             with ui.element('div').classes('camera-grid').style(
                     'grid-template-columns:repeat(3,minmax(0,1fr))'):
-                for cid in ('CAM-003', 'CAM-007', 'CAM-008'):
-                    CameraFeed(next(c for c in cameras if c.id == cid),
-                               lambda camera_id: ui.navigate.to(f'/cameras?camera_id={camera_id}'))
+                # Las cámaras físicas del equipo (laptop, USB y celular), las que transmiten en vivo.
+                for cid in (config.DEFAULT_CAMERA_ID, config.SECOND_CAMERA_ID, config.THIRD_CAMERA_ID):
+                    camera = next((c for c in cameras if c.id == cid), None)
+                    if camera:
+                        CameraFeed(camera, lambda camera_id: ui.navigate.to(f'/cameras?camera_id={camera_id}'))
 
         @ui.refreshable
         def side():

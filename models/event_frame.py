@@ -38,6 +38,9 @@ class DetectedPersonCandidate:
     face_quality: float = 0.0
     source_frame_id: str = ''
     source_type: str = 'EVENTO_AUXILIO'
+    # Rasgos estimados de la imagen, sólo orientativos al compararla con una ficha.
+    estimated_age: int | None = None
+    clothing_color: str | None = None
     # Apariencia para Re-ID futura; vacía mientras el módulo no exista.
     appearance_embedding: list = field(default_factory=list)
     appearance_status: str = 'PENDIENTE_INTEGRACION'

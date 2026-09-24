@@ -7,19 +7,20 @@ from components.case_form import NewCaseDialog
 from components.layout import PageLayout, Panel, guard_page
 from components.states import EmptyState
 from components.status_badge import StatusBadge
-from services.camera_monitor_service import monitor
+from services.camera_monitor_service import autostart_enabled, monitor
 from services.cameras_service import get_cameras
 from services.cases_service import get_active_cases
 from services import live_recognition_service as live_service
 from services.live_recognition_service import (
-    KIND_LABELS, LIVE_INSTANCES, LiveRecognitionError, find_device, get_live_for_camera, live_1, live_2, live_3
+    KIND_LABELS, LIVE_INSTANCES, LiveRecognitionError, find_device, get_live_for_camera, live_1, live_2, live_3,
+    recognition_text
 )
 from services.users_service import can, require
 
 LEGEND = [('#4caf50', 'ALTA'), ('#ffc800', 'MEDIA'), ('#ff8c00', 'BAJA'), ('#aaaaaa', 'Sin coincidencia')]
 SLOTS = {'1': live_1, '2': live_2, '3': live_3}
 TITLES = {'1': '01 / Cámara 1 · Laptop', '2': '02 / Cámara 2 · Webcam USB', '3': '03 / Cámara 3 · Celular'}
-IDLE_HINTS = {'3': 'Enlaza el celular con Enlace Móvil de Windows y pulsa INICIAR'}
+IDLE_HINTS = {'3': 'Enlaza el celular con Enlace Móvil de Windows; se incorpora solo en unos segundos'}
 
 
 def device_options(inst, devices):
@@ -208,14 +209,17 @@ def live_page():
                             status = ui.label('DETENIDA').classes('text-sm font-semibold')
                         info = ui.label('').classes('text-[11px] text-gray-500')
                     device = ui.label('').classes('text-[11px] text-gray-500')
+                    # El reconocimiento es una capa aparte: sin modelo, la cámara transmite y graba igual.
+                    recognition = ui.label('').classes('text-[11px]')
+                    evidence = ui.label('').classes('text-[11px] text-gray-500')
                     cam = ui.select(networks, value=inst.camera_id if inst.camera_id in networks else None,
                                     label='Cámara de red').props('outlined dense').classes('w-full')
                     dev = ui.select(device_options(inst, state['devices']), value='auto',
                                     label='Dispositivo físico').props('outlined dense').classes('w-full')
                     with ui.row().classes('w-full gap-2'):
-                        start_btn = ui.button('INICIAR', icon='videocam', on_click=lambda: start_cam(slot)) \
+                        start_btn = ui.button('REANUDAR', icon='play_arrow', on_click=lambda: start_cam(slot)) \
                             .props('unelevated no-caps').classes('flex-1')
-                        stop_btn = ui.button('DETENER', icon='stop', on_click=lambda: stop_cam(slot)) \
+                        stop_btn = ui.button('PAUSAR', icon='pause', on_click=lambda: stop_cam(slot)) \
                             .props('outline no-caps').classes('flex-1')
                     register = ui.button('Registrar persona con esta cámara', icon='person_add',
                                          on_click=lambda: register_from(inst)) \
@@ -225,7 +229,8 @@ def live_page():
                         stop_btn.mark('live-stop')
                         register.mark('live-register')
             panels[slot] = {'video': video, 'idle': idle, 'dot': dot, 'status': status, 'info': info,
-                            'device': device, 'cam': cam, 'dev': dev, 'start': start_btn, 'stop': stop_btn}
+                            'device': device, 'cam': cam, 'dev': dev, 'start': start_btn, 'stop': stop_btn,
+                            'recognition': recognition, 'evidence': evidence}
 
         with ui.element('div').classes('workspace-grid'):
             with ui.column().classes('w-full gap-5 min-w-0'):
@@ -234,12 +239,16 @@ def live_page():
                         ui.icon('videocam', color='primary', size='22px')
                         ui.label('Monitoreo facial simultáneo · laptop, USB y celular').classes('font-semibold text-sm')
                     with ui.row().classes('gap-2'):
-                        ui.button('INICIAR TODAS', icon='play_arrow', on_click=start_all) \
+                        ui.button('REANUDAR TODAS', icon='play_arrow', on_click=start_all) \
                             .props('unelevated no-caps size=sm color=primary')
-                        ui.button('DETENER TODAS', icon='stop', on_click=stop_all_cams) \
+                        ui.button('PAUSAR TODAS', icon='pause', on_click=stop_all_cams) \
                             .props('outline no-caps size=sm')
                         ui.button('Detectar cámaras', icon='search', on_click=detect_devices) \
                             .props('flat no-caps size=sm').mark('live-detect')
+                ui.label(f'Monitoreo continuo: las cámaras y el micrófono se encienden solos al iniciar NEXO y se '
+                         f'reintentan si se desconectan. Cuando alguien pide ayuda, se conserva por sí solo el clip '
+                         f'de {config.EVIDENCE_PRE_SECONDS} s antes y {config.EVIDENCE_POST_SECONDS} s después (video, '
+                         'audio y fotos). Pausar libera la cámara hasta que alguien la reanude.').classes('notice')
                 with ui.column().classes('w-full gap-0 px-1'):
                     detected()
 
@@ -277,14 +286,27 @@ def live_page():
                 running = inst.running
                 # Windows muestra un cuadro negro con un círculo mientras el celular no acepta la conexión.
                 waiting = running and inst.kind == 'phone' and inst.dark
+                paused = not running and (inst.paused_by or monitor.paused_by)
+                connecting = not running and not paused and autostart_enabled()
                 w['status'].set_text('INICIANDO…' if busy and not running else
                                      'ESPERANDO AL CELULAR' if waiting else
-                                     'PAUSADA' if not running and (inst.paused_by or monitor.paused_by) else inst.status)
+                                     'PAUSADA' if paused else
+                                     'CONECTANDO…' if connecting else inst.status)
                 w['dot'].classes(replace='status-dot ' + ('green' if running and not waiting else ''))
+                problem = next((part.split(': ', 1)[1] for part in (monitor.stream_error or '').split(' · ')
+                                if part.startswith(inst.name + ': ')), '')
                 w['info'].set_text('Desbloquea el celular y acepta la conexión' if waiting else
-                                   f'{inst.fps:.1f} fps · {len(inst.faces)} rostro(s)' if running else '')
+                                   f'{inst.fps:.1f} fps · {len(inst.faces)} rostro(s)' if running else
+                                   f'Se reintenta sola: {problem}' if connecting and problem else '')
                 w['device'].set_text(f'Dispositivo {inst.camera_index} · {inst.device_name or "sin nombre"} '
                                      f'→ {inst.camera_id}' if running else '')
+                w['recognition'].set_text(recognition_text(inst) if running else '')
+                w['recognition'].classes(replace='text-[11px] ' + ('text-[#b45309]' if inst.recognition == 'NO_DISPONIBLE'
+                                                                    else 'text-[#2f7a55]'))
+                w['evidence'].set_text(f'Evidencia lista: {inst.ring.span():.0f} s de video en memoria '
+                                       f'(se conservan {config.EVIDENCE_PRE_SECONDS} s antes y '
+                                       f'{config.EVIDENCE_POST_SECONDS} s después de una frase de auxilio)'
+                                       if running else '')
                 w['video'].set_visibility(running)
                 w['idle'].set_visibility(not running)
                 w['start'].set_enabled(not running and not busy and allowed)

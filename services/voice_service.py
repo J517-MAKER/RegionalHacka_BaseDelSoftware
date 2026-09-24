@@ -109,7 +109,9 @@ def process_text(text, camera_id=None, source='MICROPHONE', recognition_metadata
     if event.intent == 'SOLICITUD_AUXILIO':
         create_voice_alert(event)
         register_capture_in_database(event)
-    else:
+    elif risk.classification != 'NORMAL':
+        # La conversación ordinaria no deja rastro en la bitácora: con la escucha continua serían
+        # cientos de registros por hora, y lo que se dijo sin señales de auxilio se descarta.
         store.audit('Sistema', 'Voz', f'{event.id}: {event.classification}; prioridad {event.priority}', camera_id=camera_id, result=event.status)
     prune_voice_history()
     return event
@@ -147,7 +149,7 @@ def register_capture_in_database(event):
         return None
     if not database_reachable():
         _database_enabled[0] = False
-        print('Base de datos no disponible: el evento se conserva en memoria y en evidencia.')
+        print('Base compartida (PostgreSQL) no disponible: el evento se conserva en la base local y en evidence/.')
         return None
     try:
         from services.db_service import guardar_captura_rostro
@@ -165,7 +167,7 @@ def register_capture_in_database(event):
     if captura is None:
         # Sin contenedor ni controlador no se reintenta: la detección no puede esperar a la red.
         _database_enabled[0] = False
-        print('Base de datos no disponible: el evento se conserva en memoria y en evidencia.')
+        print('Base compartida (PostgreSQL) no disponible: el evento se conserva en la base local y en evidence/.')
     return captura
 
 
@@ -248,8 +250,13 @@ class MicrophoneCapture:
         import numpy as np
         audio = np.concatenate(self.chunks)
         self.chunks = []
-        if float(np.max(np.abs(audio))) < 0.0001:
+        peak = float(np.max(np.abs(audio)))
+        if peak < 0.0001:
             raise VoiceError('No se detectó voz en la grabación.')
+        # Los micrófonos de laptop graban bajo y el reconocedor confunde las palabras flojas.
+        # Se sube el nivel hasta un pico común, sin recortar: no cambia lo dicho, sólo su volumen.
+        if peak < 0.5:
+            audio = audio * (0.85 / peak)
         return audio
 
 
@@ -257,19 +264,46 @@ _model = None
 _model_lock = threading.Lock()
 
 
-def transcribe_audio(audio):
+def model_loaded():
+    return _model is not None
+
+
+def model_cached():
+    """True si el modelo de voz ya está en la caché de Hugging Face: cargarlo no descarga nada."""
+    import os
+    from pathlib import Path
+    cache = os.getenv('HF_HUB_CACHE') or Path(os.getenv('HF_HOME') or Path.home() / '.cache' / 'huggingface') / 'hub'
+    return any(Path(cache).glob(f'models--Systran--faster-whisper-{config.VOICE_MODEL}/snapshots/*/model.bin'))
+
+
+def transcribe_audio(audio, prompt=None, beam_size=1):
+    """Transcribe un fragmento en español.
+
+    `prompt` es vocabulario de contexto: el reconocedor tiende a escribir palabras comunes en
+    lugar de las del dominio («folio», «coincidencias», «CAM-008»), y nombrárselas antes reduce
+    esas confusiones. `beam_size` mayor explora más alternativas: cuesta tiempo, así que sólo lo
+    usa el asistente, que transcribe una frase corta y no un flujo continuo.
+    """
     global _model
     with _model_lock:
         if _model is None:
             try:
-                if config.VOICE_MODEL not in ('tiny', 'base', 'small'):
+                if config.VOICE_MODEL not in ('tiny', 'base', 'small', 'medium'):
                     raise ValueError('Modelo no permitido')
                 from faster_whisper import WhisperModel
                 _model = WhisperModel(config.VOICE_MODEL, device='cpu', compute_type='int8')
             except Exception as exc:
                 raise VoiceError('No fue posible cargar el modelo de reconocimiento. Puedes usar la pestaña Pruebas.') from exc
         try:
-            segments, info = _model.transcribe(audio, language=config.VOICE_LANGUAGE, beam_size=1, vad_filter=True)
+            segments, info = _model.transcribe(
+                audio, language=config.VOICE_LANGUAGE, beam_size=beam_size, vad_filter=True,
+                # Sin esto una ventana arrastra el texto de la anterior y repite frases.
+                condition_on_previous_text=False,
+                initial_prompt=prompt,
+                # Se reintenta con más temperatura cuando la primera pasada sale incoherente.
+                temperature=[0.0, 0.2, 0.4],
+                # El recorte por defecto se come el arranque y el final de cada frase.
+                vad_parameters={'min_silence_duration_ms': 300, 'speech_pad_ms': 300})
             segments = list(segments)
             text = ' '.join(s.text.strip() for s in segments).strip()
             if not text:

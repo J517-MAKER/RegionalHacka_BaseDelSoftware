@@ -76,9 +76,17 @@ def context_labels():
 
 
 def switch_demo_user(user_id):
+    """Cambia de puesto y cierra lo que abrió el anterior.
+
+    Un cambio de perfil es un relevo, no una pestaña más: la cámara y la escucha continua que
+    encendió el operador no pueden seguir corriendo en la sesión del administrador, cuyo único
+    dispositivo es el micrófono del asistente de voz, y sólo mientras se habla con él.
+    """
     user = next(u for u in store.users if u.id == user_id and u.status == 'Activo')
     app.storage.user['user_id'] = user.id
     app.storage.user['authenticated'] = False
+    from services.camera_monitor_service import monitor
+    monitor.apply_role(user.role, user.username)
     store.audit(user.username, 'Sesión', f'Sesión de demostración: {user.role}')
 
 

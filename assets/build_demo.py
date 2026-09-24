@@ -11,13 +11,20 @@ def svg(content,width=1200,height=700):
     return f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">{content}</svg>'
 
 
+PORTRAITS = 5  # una ilustración por caso de demostración (mocks/cases.py)
+
+
 def build_assets():
     ROOT.mkdir(parents=True,exist_ok=True)
     if not (ROOT/'test-tone.wav').exists():
         with wave.open(str(ROOT/'test-tone.wav'),'wb') as audio:
             audio.setparams((1,2,16000,0,'NONE','not compressed'))
             audio.writeframes(b''.join(struct.pack('<h',int(2500*math.sin(2*math.pi*440*i/16000)) if i%8000<4000 else 0) for i in range(32000)))
+    # Cada retrato que falte se genera, aunque el resto ya exista (un caso nuevo no queda sin foto).
+    missing = [i for i in range(1, PORTRAITS + 1) if not (ROOT/f'person-{i}.svg').exists()]
     if (ROOT/'map.svg').exists():
+        for i in missing:
+            (ROOT/f'person-{i}.svg').write_text(svg(portrait_svg(i),500,600),encoding='utf-8')
         return
     blocks=[]
     for row in range(7):
@@ -42,10 +49,18 @@ def build_assets():
         blocks.append(f'<text x="{x}" y="{y}" font-family="Arial,sans-serif" font-size="10" fill="#8a978d" text-anchor="middle" letter-spacing="1.8">{label}</text>')
     blocks.append('<path d="M1140 53l-8 22 8-5 8 5z" fill="#6c7d80"/><text x="1140" y="45" text-anchor="middle" font-family="Arial" font-size="11" fill="#6c7d80">N</text>')
     (ROOT/'map.svg').write_text(svg('<rect width="1200" height="700" fill="#f3f4ef"/>'+''.join(blocks)),encoding='utf-8')
-    for i in range(1,5):
-        hair=['#403a34','#302b29','#5d4235','#2d3035'][i-1]
-        shirt=['#3b596d','#6b7161','#675268','#4b6775'][i-1]
-        portrait=f'''<rect width="500" height="600" fill="#dce1e2"/>
+    for i in range(1,PORTRAITS+1):
+        portrait=portrait_svg(i)
+        (ROOT/f'person-{i}.svg').write_text(svg(portrait,500,600),encoding='utf-8')
+        if i==1:
+            (ROOT/'capture.svg').write_text(svg(portrait.replace('#dce1e2','#a8b5b5')+'<rect x="140" y="120" width="218" height="292" fill="none" stroke="#d0b771" stroke-width="3"/><text x="150" y="108" font-family="monospace" fill="#283d4a" font-size="15">CAM-003 / MUESTRA SINTÉTICA</text>',500,600),encoding='utf-8')
+    build_scenes()
+
+
+def portrait_svg(i):
+        hair=['#403a34','#302b29','#5d4235','#2d3035','#4a3b2f'][(i-1)%5]
+        shirt=['#3b596d','#6b7161','#675268','#4b6775','#6d4b3b'][(i-1)%5]
+        return f'''<rect width="500" height="600" fill="#dce1e2"/>
         <rect x="22" y="22" width="456" height="556" fill="#d0d7d9" stroke="#b9c4c9"/>
         <path d="M88 600V489Q98 405 208 398H292Q402 412 412 489V600" fill="{shirt}"/>
         <path d="M214 354H286V427L250 459L214 427" fill="#bd9680"/>
@@ -60,9 +75,9 @@ def build_assets():
         <path d="M206 408L249 460L223 485L180 423M293 408L250 460L276 485L320 424" fill="none" stroke="#92a2a8" stroke-width="2"/>
         <rect y="554" width="500" height="46" fill="#203645"/>
         <text x="250" y="582" fill="#e0e8ec" text-anchor="middle" font-family="Arial" font-size="14" letter-spacing="2">PERSONA FICTICIA · REFERENCIA {i:02d}</text>'''
-        (ROOT/f'person-{i}.svg').write_text(svg(portrait,500,600),encoding='utf-8')
-        if i==1:
-            (ROOT/'capture.svg').write_text(svg(portrait.replace('#dce1e2','#a8b5b5')+'<rect x="140" y="120" width="218" height="292" fill="none" stroke="#d0b771" stroke-width="3"/><text x="150" y="108" font-family="monospace" fill="#283d4a" font-size="15">CAM-003 / MUESTRA SINTÉTICA</text>',500,600),encoding='utf-8')
+
+
+def build_scenes():
     for i in range(1,4):
         scene=f'''<rect width="960" height="540" fill="#9daaad"/>
         <path d="M0 210L960 170V540H0" fill="#b5b9b3"/>

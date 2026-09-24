@@ -1,6 +1,6 @@
 """Push-to-talk assistant for administrators. Independent of the distress detection."""
 from nicegui import app, ui, run
-from services.admin_voice_assistant_service import handle_command
+from services.admin_voice_assistant_service import TRANSCRIPTION_PROMPT, handle_command
 from services.users_service import can, require
 from services.voice_service import MicrophoneCapture, transcribe_audio
 
@@ -76,6 +76,12 @@ def AdminVoiceAssistant():
             with ui.element('div').classes('assistant-foot'):
                 talk = ui.button('Hablar', icon='mic', on_click=lambda: toggle()).props('unelevated') \
                     .classes('assistant-talk')
+                # Un micrófono lejano o una sala ruidosa pueden dejar mal escrita la frase. El
+                # mismo comando se puede teclear: recorre exactamente el mismo camino que la voz.
+                typed = ui.input(placeholder='O escríbelo aquí') \
+                    .props('dense outlined bg-color=white input-class=text-xs') \
+                    .classes('assistant-typed').mark('assistant-input')
+                typed.on('keydown.enter', lambda: send_typed())
         panel.set_visibility(False)
         # color=white: a flat Quasar button otherwise paints its label with the primary colour,
         # which is unreadable over the dark pill.
@@ -146,13 +152,27 @@ def AdminVoiceAssistant():
             render('ERROR', result=str(exc))
             ui.timer(5, reset, once=True)
 
-    async def finish():
-        render('PROCESSING')
-        audio = None
+    async def send_typed():
+        """El mismo comando, tecleado. Un micrófono lejano o una sala con ruido pueden dejar la
+        frase mal escrita; escribirla recorre exactamente el mismo camino que la voz."""
+        if state['busy'] or not (typed.value or '').strip():
+            return
+        state['busy'] = True
+        said = typed.value.strip()
+        typed.set_value('')
         try:
-            actor = require('assistant.use')  # resolved here: the worker thread has no session
-            audio = await run.io_bound(capture.stop)
-            said, _ = await run.io_bound(transcribe_audio, audio)
+            actor = require('assistant.use')
+            render('PROCESSING')
+            await run_command(said, actor)
+        except Exception as exc:
+            render('ERROR', result=str(exc))
+            ui.timer(5, reset, once=True)
+        finally:
+            state['busy'] = False
+
+    async def run_command(said, actor):
+        """Interpreta y ejecuta un comando ya en texto, venga del micrófono o del teclado."""
+        try:
             result = await run.io_bound(handle_command, said, actor)
             if result['status'] == 'OPTIONS':
                 render('SUCCESS', message=result['message'], said=said, choices=result['options'])
@@ -164,11 +184,26 @@ def AdminVoiceAssistant():
             else:
                 render('ERROR', said=said, result=result['message'])
         except Exception as exc:
+            render('ERROR', said=said, result=str(exc))
+        finally:
+            ui.timer(5, reset, once=True)
+
+    async def finish():
+        render('PROCESSING')
+        audio = None
+        try:
+            actor = require('assistant.use')  # resolved here: the worker thread has no session
+            audio = await run.io_bound(capture.stop)
+            # El vocabulario del puesto y una búsqueda más amplia: la frase es corta y se dicta
+            # una sola vez, así que conviene gastar el tiempo extra en acertarla.
+            said, _ = await run.io_bound(transcribe_audio, audio, TRANSCRIPTION_PROMPT, 5)
+            await run_command(said, actor)
+        except Exception as exc:
             render('ERROR', result=str(exc))
+            ui.timer(5, reset, once=True)
         finally:
             audio = None  # the command audio is never stored nor reused
             capture.chunks.clear()
-            ui.timer(5, reset, once=True)
 
     async def toggle():
         if state['busy']:

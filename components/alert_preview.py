@@ -56,6 +56,56 @@ def MatchLevel(level, text, detail=''):
                 ui.label(detail).classes('text-xs muted')
 
 
+CAMERA_MESSAGES = {
+    'PENDIENTE': 'Pendiente de análisis.',
+    'SIN_FOTOGRAFIA': 'Sin fotografía recortada: no se buscó en las cámaras.',
+    'SIN_REFERENCIA_FACIAL': 'La fotografía no dio una huella facial utilizable: no se buscó en las cámaras.',
+    'SIN_APARICIONES_EN_CAMARAS': 'Ninguna captura de las cámaras se parece lo suficiente a la fotografía de la '
+                                  'ficha. Si se registra el caso, las cámaras en vivo la seguirán buscando.',
+}
+
+
+def show_camera_match(record, result):
+    from components.face_comparison import FaceComparison, capture_side, ficha_side
+    capture = result['capture']
+    with ui.dialog() as dialog, ui.card().classes('app-dialog wide p-0 gap-0'):
+        with ui.row().classes('panel-heading w-full'):
+            ui.label(f'Ficha importada ↔ {capture.camera_id} · {capture.timestamp}').classes('section-title')
+            ui.button(icon='close', on_click=dialog.close).props('flat dense round')
+        with ui.column().classes('p-5 w-full gap-0'):
+            FaceComparison(ficha_side(None, record.reference_profile, photo='/' + record.photo_path),
+                           capture_side(capture.image, result['camera'], capture.timestamp, capture.kind,
+                                        capture.estimated_age, capture.clothing_color, capture.label),
+                           result['signals'], priority=result['priority'])
+            if capture.event_id:
+                ui.button('Ver evidencia del evento', icon='videocam',
+                          on_click=lambda: ui.navigate.to(f'/alerts?event_id={capture.event_id}')) \
+                    .props('outline no-caps').classes('mt-3')
+    dialog.open()
+
+
+def CameraMatches(record):
+    """La ficha importada contra lo que las cámaras ya guardaron, con su comparación lado a lado."""
+    from components.face_comparison import LevelBadge
+    ui.label('Apariciones en cámaras').classes('section-title mt-3')
+    if not record.camera_matches:
+        ui.label(CAMERA_MESSAGES.get(record.camera_match_status, record.camera_match_status)).classes('text-sm muted')
+        return
+    for result in record.camera_matches:
+        capture = result['capture']
+        with ui.row().classes('items-center gap-3 w-full border-b border-[#edf0f2] py-2 no-wrap'):
+            ui.image(capture.image or '/assets/demo/capture.svg').classes('w-10 h-12 rounded shrink-0').props('fit=cover')
+            with ui.column().classes('gap-0 flex-1 min-w-0'):
+                ui.label(f'{capture.camera_id} · {capture.timestamp}').classes('text-sm')
+                ui.label(capture.label or capture.kind).classes('text-xs muted')
+            ui.label('Rostro').classes('text-[10px] muted')
+            LevelBadge(result['level'])
+            ui.button('Comparar', icon='compare', on_click=lambda r=result: show_camera_match(record, r)) \
+                .props('flat dense no-caps')
+    ui.label('Posibles apariciones de la persona de la ficha en lo que registraron las cámaras. Requieren '
+             'revisión humana.').classes('text-xs muted')
+
+
 def MatchBlocks(record, on_link=None):
     """Three groups, always phrased as possibilities pending human validation."""
     ui.label('Coincidencias con casos existentes').classes('section-title')
@@ -91,6 +141,8 @@ def MatchBlocks(record, on_link=None):
         ui.label(record.face_message).classes('text-sm muted')
     else:
         ui.label('Pendiente de análisis.').classes('text-sm muted')
+
+    CameraMatches(record)
 
     ui.label('Coincidencias contextuales').classes('section-title mt-3')
     for match in record.context_matches or []:

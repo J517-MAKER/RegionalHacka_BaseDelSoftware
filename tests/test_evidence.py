@@ -26,8 +26,11 @@ def speech(seconds, amplitude=.2):
 
 class PipelineTest(unittest.TestCase):
     def setUp(self):
+        # Cada evento deja también fotos y personas: sin restaurarlas, un evento de otra prueba
+        # con el mismo identificador heredaría las de éste.
         self.snapshot = (store.voice_events[:], store.alerts[:], store.logs[:],
-                         store.evidence[:], store.deletion_requests[:])
+                         store.evidence[:], store.deletion_requests[:], store.event_frames[:],
+                         store.person_candidates[:], store.candidate_matches[:])
         store.evidence.clear()
         store.deletion_requests.clear()
         self.directory = tempfile.TemporaryDirectory()
@@ -45,8 +48,8 @@ class PipelineTest(unittest.TestCase):
     def tearDown(self):
         for item in reversed(self.patches):
             item.stop()
-        (store.voice_events[:], store.alerts[:], store.logs[:],
-         store.evidence[:], store.deletion_requests[:]) = self.snapshot
+        (store.voice_events[:], store.alerts[:], store.logs[:], store.evidence[:], store.deletion_requests[:],
+         store.event_frames[:], store.person_candidates[:], store.candidate_matches[:]) = self.snapshot
 
     # ------------------------------------------------------------------ helpers
     def session(self):
@@ -79,6 +82,9 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(len(ring.read(0, ring.written)), 2 * RATE)
         self.assertTrue(np.allclose(ring.read(ring.written - 10, ring.written), 1))
         self.assertEqual(len(ring.read(ring.written, ring.written + 100)), 0)
+        # Lo pedido desde una muestra ya descartada empieza, de verdad, en la más antigua.
+        start, samples = ring.read_span(0, RATE + 10)
+        self.assertEqual((start, len(samples)), (RATE, 10))
 
     # ------------------------------------------------------------------ PRUEBA 1
     def test_past_narration_creates_no_evidence(self):

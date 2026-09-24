@@ -1,5 +1,6 @@
 from datetime import datetime
 from nicegui import ui
+from components.live_alerts import HeaderAlerts
 from services.live_recognition_service import any_live
 from services.users_service import context_labels, get_current_user, get_users, switch_demo_user
 
@@ -10,6 +11,8 @@ def Header(drawer):
         ui.button(icon='menu',on_click=drawer.toggle).props('flat dense round aria-label="Abrir navegación"').classes('drawer-toggle')
         ui.label(context_labels()[0]).classes('topbar-title')
         ui.space()
+        # Eventos de auxilio y coincidencias con fichas pendientes: visibles desde cualquier página.
+        HeaderAlerts()
         with ui.row().classes('items-center gap-2 header-connection'):
             ui.element('span').classes('status-dot text-[#357358]')
             ui.label('Servicios simulados conectados').classes('text-[10px] muted')

@@ -1,259 +1,246 @@
-from datetime import datetime
-# pyrefly: ignore [missing-import]
+"""Mapa y seguimiento: dónde se vio a una persona, por dónde pudo moverse y dónde se vio al final.
+
+El sujeto puede ser una ficha de búsqueda (sus detecciones en las cámaras) o una persona vista
+en un evento de auxilio (sus reapariciones en las demás cámaras del equipo). El mapa une los
+puntos en orden, estima cada tramo y marca la última posición conocida. Se actualiza solo: si
+la persona camina de la cámara A a la B, el trayecto crece mientras se mira.
+"""
 from nicegui import ui
 from components.layout import PageLayout, Panel, guard_page
-from components.map_view import MapView
-from components.timeline import Timeline
+from components.map_view import MapView, update_route
 from components.person_profile import InfoPair
-from components.status_badge import StatusBadge
-from components.detection_detail import DetectionDetail
 from components.states import EmptyState
-from services.cases_service import get_cases, get_case
-from services.tracking_service import get_tracking_history
+from components.timeline import Timeline
+from components.detection_detail import DetectionDetail
 from services.alerts_service import get_alert, get_alert_event
 from services.cameras_service import get_camera, get_nearby_cameras
+from services.cases_service import get_case, get_cases
+from services.geo_service import human_distance
+from services.route_service import (PLAUSIBILITY_LABELS, POINT_LABELS, case_route, duration_label,
+                                    event_track_route)
+from services.tracking_service import get_track_sightings, get_tracking_history
+from services import store
+
+REFRESH_SECONDS = 5
+STATUS_BADGES = {'VALIDADA': 'green', 'POSIBLE': 'amber', 'EVENTO': 'red', 'AVISTAMIENTO': 'blue'}
+
+
+def clean(name):
+    return (name or '').replace(' (ficticia)', '').replace(' (ficticio)', '')
+
+
+def subject_options():
+    """Fichas y personas de eventos con reapariciones, en un solo selector."""
+    options = {f'case:{c.id}': f'Ficha · {c.id} · {clean(c.person.name)}' for c in get_cases()}
+    for candidate in store.person_candidates:
+        if get_track_sightings(candidate.candidate_id):
+            options[f'track:{candidate.event_id}:{candidate.candidate_id}'] = \
+                f'Evento · {candidate.event_id} · {candidate.person_track_id}'
+    return options
+
+
+def target_url(key):
+    kind, _, rest = key.partition(':')
+    if kind == 'track':
+        event_id, _, candidate_id = rest.partition(':')
+        return f'/tracking?event_id={event_id}&track={candidate_id}'
+    return f'/tracking?case_id={rest}'
+
+
+def event_tracks(event_id):
+    return [c for c in store.person_candidates if c.event_id == event_id]
 
 
 @ui.page('/tracking')
-def tracking_page(case_id: str = 'BUS-2026-0184', alert_id: str = '', camera_id: str = ''):
+def tracking_page(case_id: str = 'BUS-2026-0184', alert_id: str = '', camera_id: str = '',
+                  event_id: str = '', track: str = ''):
     if not guard_page('/tracking', 'tracking.view'):
         return
     alert = get_alert(alert_id) if alert_id else None
 
     with PageLayout('/tracking', 'Mapa y seguimiento',
-                    'Puntos de detección y relaciones cronológicas. Las conexiones no representan una trayectoria física.'):
-
-        # ── Inject vibrant tracking-specific styles ─────────────────────
-        ui.add_css("""
-        .tracking-info-panel {
-            background: linear-gradient(180deg, rgba(15,23,42,0.03) 0%, transparent 100%);
-        }
-        .tracking-stat-row {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 8px 12px;
-            border-radius: 10px;
-            transition: all 0.25s ease;
-        }
-        .tracking-stat-row:hover {
-            background: rgba(0,240,255,0.04);
-        }
-        .tracking-stat-icon {
-            width: 36px; height: 36px;
-            border-radius: 10px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 16px;
-            flex-shrink: 0;
-        }
-        .tracking-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 11px;
-            font-weight: 600;
-            letter-spacing: 0.3px;
-        }
-        .tracking-badge-active {
-            background: rgba(0,240,255,0.1);
-            color: #00F0FF;
-            border: 1px solid rgba(0,240,255,0.2);
-        }
-        .tracking-badge-alert {
-            background: rgba(255,61,113,0.1);
-            color: #FF3D71;
-            border: 1px solid rgba(255,61,113,0.2);
-        }
-        .tracking-badge-warning {
-            background: rgba(255,184,0,0.1);
-            color: #FFB800;
-            border: 1px solid rgba(255,184,0,0.2);
-        }
-        .tracking-nearby-card {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 10px 14px;
-            background: linear-gradient(135deg, rgba(15,23,42,0.04) 0%, rgba(30,41,59,0.02) 100%);
-            border: 1px solid rgba(0,240,255,0.08);
-            border-radius: 10px;
-            transition: all 0.25s ease;
-            text-decoration: none;
-            color: inherit;
-        }
-        .tracking-nearby-card:hover {
-            border-color: rgba(0,240,255,0.2);
-            background: rgba(0,240,255,0.04);
-            transform: translateX(4px);
-        }
-        .tracking-nearby-dot {
-            width: 8px; height: 8px;
-            border-radius: 50%;
-            flex-shrink: 0;
-        }
-        .tracking-nearby-dot.online { background: #00F0FF; box-shadow: 0 0 8px rgba(0,240,255,0.5); }
-        .tracking-nearby-dot.offline { background: #64748B; }
-        .tracking-nearby-dot.alert { background: #FF3D71; box-shadow: 0 0 8px rgba(255,61,113,0.5); }
-        .tracking-timeline-header {
-            background: linear-gradient(90deg, rgba(0,240,255,0.05), transparent);
-            border-bottom: 1px solid rgba(0,240,255,0.08);
-            padding: 8px 16px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        .tracking-timeline-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-            background: rgba(168,85,247,0.08);
-            border: 1px solid rgba(168,85,247,0.15);
-            border-radius: 6px;
-            padding: 3px 10px;
-            font-size: 10px;
-            font-weight: 600;
-            color: #A855F7;
-            letter-spacing: 0.5px;
-        }
-        .tracking-person-card {
-            background: linear-gradient(135deg, rgba(15,23,42,0.05) 0%, transparent 100%);
-            border: 1px solid rgba(0,240,255,0.08);
-            border-radius: 12px;
-            padding: 16px;
-            margin-bottom: 8px;
-        }
-        """)
-
-        if alert_id and not alert:
+                    'Dónde se vio a la persona, el trayecto estimado entre cámaras y su última posición '
+                    'conocida. Cada punto requiere validación humana.'):
+        if (alert_id and not alert) or (event_id and not any(e.event_id == event_id for e in store.evidence)):
             EmptyState('No se encontró el evento solicitado.')
             return
 
-        event = get_alert_event(alert) if alert else None
-        case = None
-        history = []
-
+        # ── Sujeto del seguimiento ──────────────────────────────────────────────────────
+        if event_id and not track:
+            tracks = [c for c in event_tracks(event_id) if c.face_embedding]
+            track = next((c.candidate_id for c in tracks if get_track_sightings(c.candidate_id)),
+                         tracks[0].candidate_id if tracks else '')
+        options = subject_options()
+        key = None
+        if event_id and track:
+            key = f'track:{event_id}:{track}'
+            candidate = next((c for c in store.person_candidates if c.candidate_id == track), None)
+            if key not in options and candidate:
+                options[key] = f'Evento · {event_id} · {candidate.person_track_id}'
+        elif not event_id:
+            if f'case:{case_id}' not in options and get_cases():
+                case_id = get_cases()[0].id
+            key = f'case:{case_id}'
         if not alert:
-            cases = get_cases()
-            options = {c.id: f'{c.id} · {c.person.name}' for c in cases}
-            if case_id not in options and cases:
-                case_id = cases[0].id
+            ui.select(options, value=key if key in options else None, label='Persona en seguimiento',
+                      on_change=lambda e: ui.navigate.to(target_url(e.value))) \
+                .props('outlined dense').classes('w-full max-w-xl')
+        # Un evento sin personas con rostro no se sustituye por otra ficha: se dice qué falta.
+        untracked_event = bool(event_id and not track and not alert)
+        if untracked_event:
+            with ui.row().classes('page-note items-start'):
+                ui.icon('info_outline', size='16px')
+                ui.label(f'{event_id} todavía no tiene una persona con rostro para seguir entre cámaras: '
+                         'falta el modelo facial, nadie quedó de frente a la cámara o el video está '
+                         'pendiente. Revisa su evidencia.').classes('flex-1')
+                ui.link('Ver evidencia →', f'/alerts?event_id={event_id}').classes('text-xs no-underline')
 
-            ui.select(options, value=case_id if case_id in options else None,
-                      label='Seleccionar expediente',
-                      on_change=lambda e: ui.navigate.to(f'/tracking?case_id={e.value}')).props(
-                'outlined dense').classes('w-full max-w-xl')
-            case = get_case(case_id)
-            if case and not camera_id:
-                history = get_tracking_history(case.id)
+        def current_route():
+            if alert or untracked_event:
+                return None
+            if event_id and track:
+                return event_track_route(event_id, track)
+            return case_route(case_id)
 
+        route = current_route()
+        event = get_alert_event(alert) if alert else None
         cam_id = event.camera_id if event else camera_id
         selected_camera = get_camera(cam_id) if cam_id else None
 
         with ui.element('div').classes('workspace-grid'):
-            with Panel('Seguimiento de evento' if alert else 'Registro espacial de detecciones',
-                       'MAPA · MÉXICO'):
-                MapView(detections=history,
-                        selected=selected_camera.id if selected_camera else None,
-                        height=500)
+            with Panel('Trayecto estimado' if route else 'Seguimiento de evento',
+                       'MAPA · ÚLTIMA POSICIÓN Y RECORRIDO'):
+                history = get_tracking_history(case_id) if not (event_id or alert) else []
+                the_map = MapView(detections=history, selected=selected_camera.id if selected_camera else None,
+                                  height=540, route=route if route and route.points else None)
 
-            with Panel('Información del seguimiento'):
-                with ui.column().classes('panel-body gap-1 tracking-info-panel'):
-                    if selected_camera:
-                        # Status badge with vibrant colors
-                        status_text = ('Seguimiento iniciado' if alert and alert.tracking_started
-                                       else selected_camera.status)
-                        badge_class = ('tracking-badge-active' if status_text == 'En línea'
-                                       else 'tracking-badge-alert' if status_text == 'Alerta'
-                                       else 'tracking-badge-warning')
-                        with ui.element('div').classes(f'tracking-badge {badge_class}'):
-                            ui.icon('circle', size='8px')
-                            ui.label(status_text)
-
-                        InfoPair('Evento / cámara',
-                                 f'{alert.id if alert else "Consulta"} · {selected_camera.id}')
-                        InfoPair('Ubicación', selected_camera.name)
-
-                        if event:
-                            InfoPair('Frase transcrita', event.transcript)
-                            InfoPair('Fecha y hora', event.timestamp)
-                            ui.label(
-                                'Evento independiente de los casos de búsqueda. '
-                                'No se ha identificado a ninguna persona.'
-                            ).classes('notice mt-3')
-
-                        # Nearby cameras with vibrant cards
-                        ui.label('Cámaras cercanas').classes('section-title mt-4')
-                        for cam in get_nearby_cameras(selected_camera.id):
-                            dot_class = ('online' if cam.status == 'En línea'
-                                         else 'alert' if cam.status == 'Alerta'
-                                         else 'offline')
-                            with ui.link(target=f'/cameras?camera_id={cam.id}').classes(
-                                    'tracking-nearby-card no-underline'):
-                                ui.element('div').classes(f'tracking-nearby-dot {dot_class}')
-                                with ui.column().classes('gap-0'):
-                                    ui.label(cam.id).classes('text-xs font-semibold')
-                                    ui.label(cam.name).classes('text-[10px] text-gray-500')
-
-                    elif case:
-                        # Person card with enhanced styling
-                        with ui.element('div').classes('tracking-person-card'):
-                            with ui.row().classes('items-center gap-4'):
-                                if case.person.photos:
-                                    ui.image(case.person.photos[0]).classes(
-                                        'w-20 h-24 mb-0').props('fit=contain').style(
-                                        'border-radius:10px; border:2px solid rgba(0,240,255,0.15);')
-                                with ui.column().classes('gap-1'):
-                                    ui.label(case.person.name).classes('text-base font-medium')
-                                    with ui.element('div').classes('tracking-badge tracking-badge-active'):
-                                        ui.label(case.id)
-
-                        valid = [t for t in history if t.detection.status != 'Descartada']
-                        if valid:
-                            start_time = valid[0].detection.timestamp
-                            end_time = valid[-1].detection.timestamp
-                            time_diff = str(datetime.fromisoformat(end_time)
-                                            - datetime.fromisoformat(start_time))
+            with Panel('Última posición conocida', 'SE ACTUALIZA SOLA'):
+                @ui.refreshable
+                def side():
+                    current = current_route()
+                    with ui.column().classes('panel-body gap-2 w-full'):
+                        if alert:
+                            AlertSummary(alert, event, selected_camera)
+                        elif current is None or not current.points:
+                            EmptyState('Todavía no hay observaciones para trazar un trayecto.')
+                            if current is not None and current.reference:
+                                InfoPair('Ficha', current.reference['label'])
                         else:
-                            start_time = end_time = 'Sin detecciones'
-                            time_diff = '—'
+                            LastPosition(current)
+                            RouteSummary(current)
+                side()
 
-                        unique_cams = len(set(t.detection.camera_id for t in history))
+        with Panel('Tramos del trayecto', 'ORDEN CRONOLÓGICO · DISTANCIA · TIEMPO · POSIBILIDAD'):
+            @ui.refreshable
+            def legs():
+                current = current_route()
+                with ui.column().classes('px-5 py-3 w-full gap-0'):
+                    if alert:
+                        InfoPair(event.timestamp, f'{event.camera_id} · Posible solicitud de auxilio · {alert.status}')
+                    elif current is None or len(current.points) < 2:
+                        EmptyState('Con una sola observación no hay tramos: la última posición es ese punto.')
+                    else:
+                        Legs(current)
+            legs()
 
-                        for label, value in [
-                            ('Inicio del seguimiento', start_time),
-                            ('Última detección', end_time),
-                            ('Tiempo entre detecciones', time_diff),
-                            ('Cámaras con detecciones', unique_cams),
-                            ('Posibles coincidencias', len(valid)),
-                        ]:
-                            InfoPair(label, value)
+        if not alert and not event_id:
+            with Panel('Línea temporal', 'DETECCIONES DE LA FICHA'):
+                @ui.refreshable
+                def timeline():
+                    with ui.element('div').classes('px-5 py-2'):
+                        events = get_tracking_history(case_id)
+                        if events:
+                            Timeline(events, horizontal=True, on_review=DetectionDetail)
+                        else:
+                            EmptyState('Sin detecciones para esta ficha.')
+                timeline()
+        else:
+            timeline = None
 
-                        confirmed = [t for t in history
-                                     if t.detection.status == 'Validada por operador']
-                        InfoPair('Última validada por operador',
-                                 confirmed[-1].detection.camera_id if confirmed
-                                 else 'Pendiente de validación')
+        def refresh():
+            if alert:
+                return
+            if update_route(the_map, current_route()):
+                side.refresh()
+                legs.refresh()
+                if timeline:
+                    timeline.refresh()
+        ui.timer(REFRESH_SECONDS, refresh)
 
-                        ui.link('Abrir expediente →', f'/cases/{case.id}').classes(
-                            'text-xs mt-4')
 
-        # Timeline section with vibrant header
-        with Panel('Línea temporal', 'ORDEN CRONOLÓGICO'):
-            with ui.element('div').classes('tracking-timeline-header'):
-                ui.element('span').classes('tracking-timeline-badge').props(
-                    'innerHTML="⏱ CRONOLOGÍA"')
-                total = len(history) if history else (1 if event else 0)
-                ui.label(f'{total} evento{"s" if total != 1 else ""} registrado{"s" if total != 1 else ""}').classes(
-                    'text-xs text-gray-500')
-            with ui.element('div').classes('px-5 py-2'):
-                if history:
-                    Timeline(history, horizontal=True, on_review=DetectionDetail)
-                elif event:
-                    InfoPair(event.timestamp,
-                             f'{event.camera_id} · Posible solicitud de auxilio · {alert.status}')
-                else:
-                    EmptyState('Sin detecciones para esta vista.')
+def AlertSummary(alert, event, camera):
+    InfoPair('Evento / cámara', f'{alert.id} · {camera.id if camera else "—"}')
+    if camera:
+        InfoPair('Ubicación', camera.name)
+    InfoPair('Frase transcrita', event.transcript)
+    InfoPair('Fecha y hora', event.timestamp)
+    ui.label('Evento independiente de los casos de búsqueda. No se ha identificado a ninguna persona.') \
+        .classes('notice mt-3')
+    if camera:
+        ui.label('Cámaras cercanas').classes('section-title mt-4')
+        for cam in get_nearby_cameras(camera.id):
+            ui.link(f'{cam.id} · {cam.name}', f'/cameras?camera_id={cam.id}').classes('text-xs py-1')
+
+
+def LastPosition(route):
+    last = route.last_point
+    with ui.element('div').classes('last-position-card'):
+        with ui.row().classes('items-center justify-between w-full'):
+            ui.label('ÚLTIMA POSICIÓN CONOCIDA').classes('eyebrow')
+            with ui.element('span').classes(f'badge {STATUS_BADGES.get(last.status, "")}'):
+                ui.element('span').classes('status-dot')
+                ui.label(POINT_LABELS.get(last.status, last.status))
+        with ui.row().classes('items-center gap-3 mt-2 no-wrap'):
+            if last.image:
+                ui.image(last.image).classes('w-16 h-20 rounded shrink-0').props('fit=cover')
+            with ui.column().classes('gap-0'):
+                ui.label(f'{last.camera_id} · {last.camera_name}').classes('text-base font-medium').mark('last-camera')
+                ui.label(f'Vista a las {last.last_seen[11:]} del {last.last_seen[:10]}').classes('text-xs')
+                ui.label(f'{last.lat:.5f}, {last.lng:.5f}').classes('mono muted')
+                if last.observations > 1:
+                    ui.label(f'{last.observations} observaciones en este punto (desde {last.first_seen[11:]})') \
+                        .classes('text-[11px] muted')
+    validated = route.last_validated
+    if validated and validated is not last:
+        InfoPair('Última validada por una persona', f'{validated.camera_id} · {validated.last_seen}')
+    elif not validated:
+        InfoPair('Última validada por una persona', 'Ninguna todavía: todo el trayecto es posible, no confirmado')
+
+
+def RouteSummary(route):
+    InfoPair('Persona en seguimiento', route.subject_label)
+    InfoPair('Puntos observados', f'{len(route.points)} cámara(s)')
+    if route.legs:
+        InfoPair('Recorrido estimado', f'{human_distance(route.total_km)} en {duration_label(route.elapsed_minutes)}')
+    if route.reference:
+        InfoPair('Referencia de la ficha', route.reference['label'])
+    for warning in route.warnings:
+        ui.label(warning).classes('notice')
+    if route.next_cameras:
+        ui.label('DÓNDE SEGUIR BUSCANDO').classes('eyebrow mt-2')
+        for km, camera in route.next_cameras:
+            status = 'desconectada' if camera.status == 'Desconectada' else 'en línea'
+            ui.link(f'{camera.id} · {camera.name} · a {human_distance(km)} ({status})',
+                    f'/cameras?camera_id={camera.id}').classes('text-xs py-1 no-underline')
+        ui.label('Cámaras contiguas a la última posición: el siguiente lugar lógico donde revisar.') \
+            .classes('text-[10px] muted')
+
+
+def Legs(route):
+    for leg in route.legs:
+        a, b = route.points[leg.start], route.points[leg.end]
+        bad = leg.plausibility == 'NO_PLAUSIBLE'
+        with ui.element('div').classes('route-leg'):
+            ui.label(str(b.order)).classes('route-order')
+            with ui.column().classes('gap-0 min-w-0'):
+                ui.label(f'{a.camera_id} {a.camera_name} → {b.camera_id} {b.camera_name}').classes('text-xs font-medium')
+                detail = f'{a.last_seen[11:]} → {b.first_seen[11:]} · {human_distance(leg.distance_km)} en ' \
+                         f'{duration_label(leg.minutes)}'
+                if leg.speed_kmh:
+                    detail += f' · {leg.speed_kmh:.1f} km/h'
+                ui.label(detail).classes('text-[11px] muted')
+                if leg.via:
+                    ui.label('Posible paso por ' + ', '.join(leg.via)).classes('text-[10px] muted')
+            with ui.element('span').classes('badge ' + ('red' if bad else 'green' if leg.plausibility == 'A_PIE'
+                                                        else 'blue')):
+                ui.label(PLAUSIBILITY_LABELS.get(leg.plausibility, leg.plausibility))

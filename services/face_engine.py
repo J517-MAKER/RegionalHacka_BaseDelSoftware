@@ -65,6 +65,34 @@ def model_downloaded():
     return folder.is_dir() and any(folder.glob('*.onnx'))
 
 
+def download_progress():
+    """MB ya descargados mientras el modelo se baja por primera vez; None si no se está bajando.
+
+    InsightFace escribe el ZIP en la carpeta de modelos y lo descomprime al terminar: su tamaño
+    es el avance que ve quien espera.
+    """
+    if model_downloaded():
+        return None
+    try:
+        return (Path(config.FACE_MODEL_ROOT) / 'models' / f'{config.FACE_MODEL}.zip').stat().st_size / 1_048_576
+    except OSError:
+        return None
+
+
+def loaded():
+    """True cuando el modelo ya está en memoria: analizar una foto tarda sólo milisegundos."""
+    return _app is not None
+
+
+def ready():
+    """True cuando se puede analizar sin descargar nada: el modelo ya está en memoria o en disco.
+
+    Los procesos de fondo (cotejo automático con fichas, perfiles) lo consultan antes de
+    calcular huellas, para no disparar la descarga de ~330 MB en un momento inesperado.
+    """
+    return _app is not None or (installed() and model_downloaded())
+
+
 def status():
     """Diagnostics for the interface and the command line; it never loads the model."""
     return {'engine': ENGINE_NAME, 'installed': installed(), 'model_downloaded': model_downloaded(),
@@ -91,8 +119,17 @@ def load(download=None):
                                    allowed_modules=MODULES)
                 app.prepare(ctx_id=0, det_thresh=config.FACE_MIN_DET_SCORE)
             except Exception as error:
+                if not model_downloaded():  # casi siempre, sin conexión a internet
+                    raise FaceEngineUnavailable('No se pudo descargar el modelo facial. Revisa la conexión a '
+                                                'internet; NEXO lo vuelve a intentar solo.') from error
                 raise FaceEngineUnavailable(f'No fue posible cargar el modelo facial: {error}') from error
             _app = app
+            # InsightFace deja el ZIP junto a la carpeta ya descomprimida: ~275 MB que no se vuelven
+            # a usar (sólo se descarga de nuevo si falta la carpeta).
+            try:
+                (Path(config.FACE_MODEL_ROOT) / 'models' / f'{config.FACE_MODEL}.zip').unlink(missing_ok=True)
+            except OSError:
+                pass
     return _app
 
 

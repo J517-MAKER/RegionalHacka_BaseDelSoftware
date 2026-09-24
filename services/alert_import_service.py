@@ -407,8 +407,23 @@ def match_face_reference(face_reference):
     else:
         message = 'Huella facial generada. Aún no hay casos con fotografías reales para comparar.'
     return {'status': 'COINCIDENCIAS_FACIALES' if candidates else 'SIN_COINCIDENCIAS_FACIALES',
-            'mock': False, 'candidates': candidates, 'compared_cases': compared,
-            'message': message + ' La búsqueda en cámaras queda pendiente del módulo de video.'}
+            'mock': False, 'candidates': candidates, 'compared_cases': compared, 'message': message}
+
+
+def match_cameras(record, reference):
+    """La ficha contra lo que las cámaras ya guardaron: eventos, detecciones y base compartida."""
+    from services.search_matching_service import profile_from_reference, search_by_profile
+    if not reference or not reference.get('embedding'):
+        return None, [], ('SIN_REFERENCIA_FACIAL' if reference and reference.get('status') != 'SIN_FOTOGRAFIA'
+                          else 'SIN_FOTOGRAFIA')
+    profile = profile_from_reference(reference['embedding'], name=record.person_name or '', age=record.age or '',
+                                     missing_date=record.date_of_disappearance or '',
+                                     location=record.location_of_events or '',
+                                     clothing=record.clothing_description or '',
+                                     marks=record.distinctive_marks or '',
+                                     photo='/' + record.photo_path if record.photo_path else '', source='FICHA')
+    results = search_by_profile(profile, limit=8)
+    return profile, results, 'APARICIONES_EN_CAMARAS' if results else 'SIN_APARICIONES_EN_CAMARAS'
 
 
 def compare_with_face_database(reference_photo):
@@ -534,10 +549,12 @@ def run_matching(record_id, actor=None):
     record.face_reference_status = reference['status'] if facial['status'] == 'SIN_FOTOGRAFIA' else facial['status']
     record.face_matches = facial['candidates']
     record.face_message = facial.get('message', '')
+    record.reference_profile, record.camera_matches, record.camera_match_status = match_cameras(record, reference)
     record.review_status = 'PENDIENTE_VALIDACION'
     store.audit(actor, 'Importación',
                 f'{record.id}: {len(record.text_matches)} coincidencia(s) textual(es); referencia facial '
-                f'{record.face_reference_status}', result='PENDIENTE_VALIDACION')
+                f'{record.face_reference_status}; {len(record.camera_matches)} aparición(es) posibles en cámaras',
+                result='PENDIENTE_VALIDACION')
     return record
 
 
@@ -566,6 +583,9 @@ def create_case_from_alert(record_id):
                           face_embedding=reference.get('embedding'), actor=actor,
                           face_status=reference.get('status', 'PENDIENTE'),
                           face_message=reference.get('message', ''))
+    # La ficha recién registrada también mira hacia atrás: lo que las cámaras ya vieron.
+    from services.cases_service import look_back
+    look_back(case.id)
     return case
 
 

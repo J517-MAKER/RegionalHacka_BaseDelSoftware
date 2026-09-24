@@ -101,6 +101,37 @@ class DemoFlowTest(unittest.IsolatedAsyncioTestCase):
             self.assertTrue((config.BASE_DIR/evidence.audio_file).exists())
             self.assertTrue(any('aprobó la solicitud' in log.description for log in store.logs))
 
+    async def test_camera_view_shows_its_own_listening_and_evidence(self):
+        """La detección de auxilio no vive en otra pantalla: ocurre en la cámara y se ve en ella.
+
+        Quien abre la cámara tiene que leer ahí mismo que está escuchando y, tras un grito, que
+        ese instante quedó conservado en imagen, audio y video para que una autoridad lo revise.
+        """
+        async with simulation() as user:
+            from services import store
+            # El almacén es compartido entre pruebas: lo que aquí se detecta no puede aparecer
+            # como evidencia previa en las demás.
+            snapshot=(store.evidence[:],store.voice_events[:],store.alerts[:],store.event_frames[:])
+            def restore():
+                (store.evidence[:],store.voice_events[:],store.alerts[:],
+                 store.event_frames[:])=snapshot
+            self.addCleanup(restore)
+            await user.open('/cameras?camera_id=CAM-008')
+            await user.should_see('ESCUCHA DE AUXILIO')
+            await user.should_see('Sin eventos de auxilio registrados en esta cámara.')
+
+            with user:
+                result=listen(['por favor déjame, me están siguiendo'])
+            evidence=store.evidence[0]
+            self.assertEqual(result['event_id'],evidence.event_id)
+
+            await user.open('/cameras?camera_id=CAM-008')
+            await user.should_see('EVIDENCIA CONSERVADA EN ESTA CÁMARA')
+            await user.should_see(evidence.event_id)
+            # El aviso sobre la propia imagen: la cámara anuncia lo que acaba de conservar.
+            await user.should_see('AUXILIO DETECTADO')
+            await user.should_see('Abrir para revisión de una autoridad')
+
     async def test_admin_assistant_is_restricted_and_navigates(self):
         async with simulation() as user:
             import numpy as np
@@ -237,7 +268,7 @@ class DemoFlowTest(unittest.IsolatedAsyncioTestCase):
                                     ('/cases/import-alert','Importar alerta de búsqueda'),('/cameras','Red de cámaras'),
                                     ('/live','Reconocimiento facial en vivo'),
                                     ('/matches','Revisión de coincidencias'),('/tracking','Mapa y seguimiento'),
-                                    ('/alerts','Revisión de evidencia'),('/voice','Detección de auxilio por voz'),
+                                    ('/alerts','Revisión de evidencia'),('/voice','Detección de auxilio en cámara'),
                                     ('/history','Historial operativo')]:
                     await user.open(route)
                     await user.should_see(content=title,marker='page-title')
@@ -300,9 +331,11 @@ class DemoFlowTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(evidence.reviewed_by,'Operador01')
                 user.find('Iniciar seguimiento').click()
                 await asyncio.sleep(.2)
+                # Con evidencia, el seguimiento de las personas del evento es real y queda confirmado.
                 self.assertTrue(alert.tracking_requested)
-                self.assertFalse(alert.tracking_started)
-                await user.should_see('Módulo de seguimiento pendiente de integración.')
+                self.assertTrue(alert.tracking_started)
+                self.assertEqual(evidence.tracking_status,'CONFIRMADO')
+                self.assertTrue(any('confirmó el seguimiento' in log.description for log in store.logs))
 
                 with user:
                     with self.assertRaises(PermissionError):
@@ -327,6 +360,24 @@ class DemoFlowTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(collector.messages,[])
         finally:
             logging.getLogger().removeHandler(collector)
+
+    async def test_tracking_an_event_without_faces_shows_no_other_case(self):
+        # «Iniciar seguimiento» abre /tracking?event_id=…; si nadie del evento tiene rostro
+        # comparable, no debe aparecer el trayecto de otra ficha como si fuera esa persona.
+        async with simulation() as user:
+            from services import store
+            from models.evidence_event import EvidenceEvent
+            event=EvidenceEvent('EVENT-SIN-ROSTROS','CAM-008','Pasillo B',store.now(),'POSIBLE_AUXILIO','MEDIA')
+            store.evidence.insert(0,event)
+            try:
+                await user.open('/tracking?event_id=EVENT-SIN-ROSTROS')
+                await user.should_see('todavía no tiene una persona con rostro')
+                await user.should_see('Todavía no hay observaciones para trazar un trayecto.')
+                self.assertIsNone(next(iter(user.find(ui.select).elements)).value)
+                await user.open('/tracking?event_id=EVENT-QUE-NO-EXISTE')
+                await user.should_see('No se encontró el evento solicitado.')
+            finally:
+                store.evidence.remove(event)
 
 
 if __name__=='__main__':

@@ -2,6 +2,7 @@
 import asyncio
 import os
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -138,15 +139,85 @@ class LiveRecognitionTest(unittest.TestCase):
         self.assertEqual((detection.case_id, detection.camera_id), (self.case.id, 'CAM-003'))
 
     def test_start_explains_camera_and_model_problems(self):
-        with patch.object(face_engine, 'load', side_effect=face_engine.FaceEngineUnavailable('Falta el modelo facial.')):
-            with self.assertRaisesRegex(LiveRecognitionError, 'Falta el modelo facial'):
-                self.live.start()
+        # Sin modelo facial la cámara NO se queda apagada: transmite y graba su anillo de
+        # evidencia, y el motivo por el que no reconoce rostros queda a la vista.
+        with patch.object(face_engine, 'load', side_effect=face_engine.FaceEngineUnavailable('Falta el modelo facial.')), \
+                patch('cv2.VideoCapture', return_value=FakeCamera()):
+            self.live.start('CAM-003', 0, 'Operador01')
+            deadline = time.monotonic() + 5
+            while (self.live.recognition != 'NO_DISPONIBLE' or not self.live.ring.frames) \
+                    and time.monotonic() < deadline:
+                time.sleep(.05)
+            self.assertTrue(self.live.running)
+            self.assertEqual(self.live.status, 'EN VIVO')
+            self.assertEqual(self.live.recognition, 'NO_DISPONIBLE')
+            self.assertIn('Falta el modelo facial', self.live.recognition_error)
+            self.assertTrue(self.live.ring.frames)  # la evidencia se sigue grabando
+            self.assertEqual(self.live.faces, [])
+            self.live.stop('Operador01')
+        self.assertEqual(self.live.ring.frames, [])  # nada de lo visto sobrevive a la sesión
         closed = FakeCamera(working=False)
         with patch.object(face_engine, 'load'), patch('cv2.VideoCapture', return_value=closed):
             with self.assertRaisesRegex(LiveRecognitionError, 'No fue posible abrir la cámara'):
                 self.live.start()
         self.assertTrue(closed.released)
         self.assertFalse(self.live.running)
+
+    def test_two_simultaneous_starts_open_the_camera_once(self):
+        # El monitoreo continuo reintenta y el botón REANUDAR arranca: pueden coincidir.
+        opened = []
+
+        def slow_start(camera_id, camera_index, actor):
+            opened.append(actor)
+            time.sleep(.2)
+            self.live.running = True
+
+        with patch.object(self.live, '_start', side_effect=slow_start):
+            callers = [threading.Thread(target=self.live.start, kwargs={'actor': actor})
+                       for actor in ('Sistema · monitoreo continuo', 'Operador01')]
+            for caller in callers:
+                caller.start()
+            for caller in callers:
+                caller.join()
+        self.assertEqual(len(opened), 1)
+        self.live.running = False
+
+    def test_each_session_has_its_own_stop_signal(self):
+        # Un hilo de la sesión anterior que tardó en salir (p. ej. descargando el modelo) no
+        # debe revivir cuando la cámara se reanuda.
+        with patch.object(face_engine, 'load'), patch.object(face_engine, 'analyze', return_value=[]), \
+                patch('cv2.VideoCapture', side_effect=lambda *args: FakeCamera()):
+            self.live.start('CAM-003', 0, 'Operador01')
+            first = self.live._stop
+            self.live.stop('Operador01')
+            self.live.start('CAM-003', 0, 'Operador01')
+            self.assertIsNot(self.live._stop, first)
+            self.assertTrue(first.is_set())
+            self.assertFalse(self.live._stop.is_set())
+            self.live.stop('Operador01')
+
+    def test_a_damaged_frame_does_not_freeze_the_stream(self):
+        class Flaky(FakeCamera):
+            reads = 0
+
+            def read(self):
+                self.reads += 1
+                if self.reads == 3:  # la primera lectura es la de prueba al abrir
+                    raise RuntimeError('cuadro dañado')
+                return super().read()
+
+        camera = Flaky()
+        with patch.object(face_engine, 'load'), patch.object(face_engine, 'analyze', return_value=[]), \
+                patch('cv2.VideoCapture', return_value=camera):
+            self.live.start('CAM-003', 0, 'Operador01')
+            deadline = time.monotonic() + 5
+            while camera.reads < 12 and time.monotonic() < deadline:
+                time.sleep(.05)
+            self.assertTrue(self.live.running)
+            self.assertIsNotNone(self.live.frame_jpeg())
+            self.live.stop('Operador01')
+        self.assertGreaterEqual(camera.reads, 12)
+        self.assertTrue(camera.released)
 
     def test_faces_in_view_are_linked_to_a_request_for_help(self):
         self.live.running, self.live.camera_id, self.live._frame = True, 'CAM-008', self.frame
@@ -162,6 +233,46 @@ class LiveRecognitionTest(unittest.TestCase):
         self.assertEqual((result['status'], result['mock'], len(result['faces'])), ('VISION_ACTIVE', False, 1))
         self.assertEqual(self.live.current_face('CAM-008')['case_id'], self.case.id)
         self.live.running = False
+
+
+class SessionDevicesTest(unittest.TestCase):
+    """Cambiar de perfil es un relevo: el puesto nuevo no hereda los dispositivos del anterior."""
+
+    def setUp(self):
+        from services.camera_monitor_service import monitor
+        self.monitor = monitor
+        self.role = monitor.role
+        self.audio = monitor._audio
+        self.logs = store.logs[:]
+
+    def tearDown(self):
+        self.monitor.role, self.monitor._audio = self.role, self.audio
+        store.logs[:] = self.logs
+
+    def test_administrator_releases_camera_and_continuous_listening(self):
+        from services.camera_monitor_service import monitor
+        stopped = []
+        listening = SimpleNamespace(running=True, stop=lambda: stopped.append('microfono'))
+        monitor._audio = listening
+        instance = SimpleNamespace(running=True)
+        with patch('services.live_recognition_service.LIVE_INSTANCES', [instance]),                 patch('services.live_recognition_service.stop_all',
+                      lambda actor=None: stopped.append('camaras')):
+            released = monitor.apply_role('Administrador', 'Admin01')
+        self.assertEqual(sorted(stopped), ['camaras', 'microfono'])
+        self.assertEqual(len(released), 2)
+        # Y el monitoreo continuo tampoco vuelve a abrirlos por su cuenta.
+        self.assertFalse(monitor.allows('camera'))
+        self.assertFalse(monitor.allows('microphone'))
+        self.assertFalse(monitor.ensure_live_stream())
+        self.assertFalse(monitor.ensure_audio_stream())
+        self.assertEqual(store.logs[0].result, 'LIBERADO')
+
+    def test_operator_keeps_its_own_devices(self):
+        from services.camera_monitor_service import monitor
+        monitor._audio = None
+        released = monitor.apply_role('Operador', 'Operador01')
+        self.assertEqual(released, [])
+        self.assertTrue(monitor.allows('camera') and monitor.allows('microphone'))
 
 
 class LivePageTest(unittest.IsolatedAsyncioTestCase):

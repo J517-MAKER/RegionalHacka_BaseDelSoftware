@@ -26,6 +26,7 @@ PLACES = [(19.4326, -99.1332),   # Ciudad de México
 
 def seed_cameras():
     import config
+    from services.geo_service import camera_position, haversine_km
     cameras = [Camera(f'CAM-{i+1:03d}', name, name, 'Centro' if i<8 else 'Poniente',
                       'Desconectada' if i in (9,14) else 'Alerta' if i==7 else 'Posible coincidencia' if i in (2,6,11) else 'En línea',
                       *POINTS[i], audio=i%3!=0,
@@ -33,13 +34,20 @@ def seed_cameras():
                       lat=PLACES[i][0], lng=PLACES[i][1])
                for i,name in enumerate(NAMES)]
     # Las cámaras físicas del equipo: la de la laptop, la webcam USB y el celular enlazado.
+    # Están donde el equipo las instala (config.PHYSICAL_CAMERA_POSITIONS, editable en .env),
+    # a pocos pasos entre sí: caminar de una a otra se ve como un trayecto real en el mapa.
     physical = {config.DEFAULT_CAMERA_ID, config.SECOND_CAMERA_ID, config.THIRD_CAMERA_ID}
     for camera in cameras:
-        # Topología explícita: qué cámaras son contiguas. Permite evaluar si una secuencia
-        # de detecciones es geográficamente coherente sin inventar el camino recorrido.
+        position = config.PHYSICAL_CAMERA_POSITIONS.get(camera.id)
+        if position:
+            camera.lat, camera.lng = position
+    for camera in cameras:
+        # Topología explícita: qué cámaras son contiguas, por distancia real. Permite evaluar si
+        # una secuencia de detecciones es geográficamente coherente y sugerir por dónde seguir.
+        here = camera_position(camera)
         camera.nearby_camera_ids = [c.id for c in sorted(
             (c for c in cameras if c.id != camera.id),
-            key=lambda c: (c.x-camera.x)**2 + (c.y-camera.y)**2)[:3]]
+            key=lambda c: haversine_km(here, camera_position(c)))[:3]]
         camera.stream_source = 'webcam' if camera.id in physical else 'simulated'
         camera.stream_status = 'CAMERA_STREAM_OFFLINE' if camera.status == 'Desconectada' else 'CAMERA_STREAM_ACTIVE'
     return cameras

@@ -2,6 +2,45 @@
 
 Frontend institucional de demostración para operadores y autoridades. Desarrollado en **Python y NiceGUI**, con páginas independientes, componentes reutilizables, revisión humana de coincidencias, seguimiento entre cámaras y simulación de solicitudes de auxilio por voz.
 
+## Arranque rápido (Windows, sin Docker)
+
+Doble clic en **`Iniciar NEXO.bat`**, en la carpeta del proyecto (si Windows dice «Windows
+protegió su PC»: *Más información* → *Ejecutar de todas formas*). No cierres la ventana que se
+abre mientras uses NEXO: cerrarla lo apaga. Es lo mismo que ejecutar en PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\iniciar.ps1
+```
+
+`iniciar.ps1` prepara el entorno y arranca NEXO en http://127.0.0.1:8080: repara un `.venv`
+copiado de otra computadora (OneDrive, ZIP, USB), instala `requirements.txt` sólo si falta
+algo, ejecuta el diagnóstico y levanta el servidor. **No necesita Docker**: los datos se
+guardan solos en una base local SQLite (`data/nexo.db`). Para revisar el equipo sin arrancar:
+
+```powershell
+.\.venv\Scripts\python.exe -m services.diagnostico
+```
+
+El diagnóstico dice qué está listo y qué falta (paquetes, cámaras, micrófono, modelos facial y
+de voz, token de Mapbox, base local y PostgreSQL), sin encender la cámara ni descargar nada.
+El token público de Mapbox va en `.env` (ver `.env.example`); sin él, el mapa se dibuja con
+MapLibre y teselas libres de CARTO.
+
+## Recuperación del 24 de septiembre de 2026
+
+Tres funciones se perdieron al fusionar ramas (en `dd01b0b` desapareció el arranque automático
+del monitoreo continuo) o no se habían terminado. Quedaron recuperadas y completas:
+
+| Función | Qué hace ahora | Dónde verlo |
+| --- | --- | --- |
+| Cámara siempre activa con evidencia | Cámaras y micrófono se encienden solos al iniciar NEXO, aunque falte el modelo facial. Al escuchar «ayuda» u otra frase de auxilio se conserva por sí solo un **clip de 5 s antes y 5 s después** de la frase: video MP4 con el audio sincronizado, el WAV original y fotos alrededor de la frase, todo con SHA-256 | `/alerts` (aviso en el encabezado de todas las páginas) |
+| Última posición y trayecto en el mapa | Une en orden dónde se vio a la persona, dibuja el trayecto entre cámaras (por calles con token de Mapbox), marca la **última posición conocida**, dice si cada tramo es posible a pie, en vehículo o no, y sugiere dónde seguir buscando. También sigue a las personas vistas en un evento en las demás cámaras del equipo | `/tracking`, detalle del caso |
+| Ficha de búsqueda contra la base | Una ficha registrada, una ficha nueva (OCR) o una fotografía autorizada se compara con todo lo que guardaron las cámaras. Cada resultado se muestra **lado a lado**: la ficha y la persona de la cámara, cuánto se parecen los rostros, sus características (edad, ropa) y el contexto de fecha y lugar. Las personas de un evento se comparan solas contra todas las fichas activas | `/search`, `/matches`, importación de fichas |
+| Base de datos sin Docker | SQLite local (`data/nexo.db`) conserva casos, evidencia, candidatos, trayectos y bitácora entre reinicios. PostgreSQL sigue siendo opcional para compartir entre instancias | `python -m services.diagnostico` |
+
+Ninguna de estas funciones identifica a nadie: todo resultado queda pendiente de revisión humana
+(operador → supervisor), y los avisos y listas muestran niveles (ALTA, MEDIA, BAJA), no cifras.
+
 El reconocimiento facial usa InsightFace (modelo `buffalo_l`) sobre las fotografías de fichas y casos y sobre la webcam del equipo en `/live`; la red CCTV, la reidentificación y el seguimiento entre cámaras siguen simulados. Las páginas consumen servicios de Python reemplazables. No hay frontend separado, Node.js ni pasos de compilación de JavaScript. NiceGUI administra sus propias dependencias web internas.
 
 ## Requisitos e instalación
@@ -38,11 +77,16 @@ Instalar y ejecutar:
 
 ```bash
 python -m pip install -r requirements.txt
-python -m services.face_engine
 python main.py
 ```
 
-El segundo comando descarga una sola vez el modelo facial (~330 MB, en `~/.insightface`) y ejecuta una autoprueba; ver [Reconocimiento facial](#reconocimiento-facial-insightface).
+**Los modelos se descargan solos.** La primera vez que arranca, NEXO descarga en segundo plano
+el modelo facial (unos 280 MB, en `~/.insightface`) y el de voz (unos 145 MB, en la caché de
+Hugging Face). El encabezado muestra el avance («DESCARGANDO RECONOCIMIENTO FACIAL · 120 MB») y,
+al terminar, el reconocimiento se activa sin reiniciar; mientras tanto la cámara ya graba. Sólo
+esa vez se necesita internet: sin conexión, NEXO lo vuelve a intentar solo cada minuto. Para
+descargarlo por adelantado y hacer una autoprueba sigue existiendo
+`python -m services.face_engine`; ver [Reconocimiento facial](#reconocimiento-facial-insightface).
 
 Se abre **http://127.0.0.1:8080** en el navegador, con redirección al centro de monitoreo. No requiere claves de API ni una base de datos. Si ya existe el entorno `.venv` preparado en este equipo, puede ejecutarse directamente con:
 
@@ -58,13 +102,14 @@ La app escucha únicamente en `127.0.0.1` de forma predeterminada. Variables opc
 | --- | --- |
 | `/monitor` | Plano de cámaras, actividad, expedientes activos y vistas de interés |
 | `/cases` | Tabla administrativa con búsqueda y filtros; alta de caso manual o desde alerta |
-| `/cases/import-alert` | Importación de fichas de búsqueda (JPG, PNG, WebP o PDF): OCR, fotografía, coincidencias y alta de caso |
-| `/cases/{case_id}` | Referencias, información del reporte, detecciones y línea temporal |
+| `/cases/import-alert` | Importación de fichas de búsqueda (JPG, PNG, WebP o PDF): OCR, fotografía, coincidencias con fichas y con lo que guardaron las cámaras, y alta de caso |
+| `/cases/{case_id}` | Referencias, información del reporte, detecciones, trayecto con última posición y línea temporal |
+| `/search` | Búsqueda por ficha: una ficha o fotografía autorizada contra las capturas de las cámaras y las demás fichas, con comparación lado a lado |
 | `/cameras` | CCTV 2 × 2, 3 × 3 y 4 × 4; filtros, grupos y panel por cámara |
-| `/live` | Webcam del equipo en vivo: reconoce a las personas en búsqueda, registra casos con la cámara y crea detecciones para revisión |
-| `/matches` | Comparación de imágenes, validación, descarte y revisión |
-| `/tracking` | Detecciones cronológicas, estados y consulta de cámaras cercanas |
-| `/alerts` | Evidencia de voz: audio, integridad, análisis, revisión y solicitudes de eliminación |
+| `/live` | Cámaras del equipo (laptop, USB y celular) en monitoreo continuo: reconocen a las personas en búsqueda, siguen a las personas de un evento y guardan los segundos alrededor de una frase de auxilio |
+| `/matches` | Comparación lado a lado (ficha ↔ cámara), descarte, escalamiento y revisión |
+| `/tracking` | Trayecto estimado de una ficha o de una persona de un evento, última posición conocida, tramos y dónde seguir buscando |
+| `/alerts` | Evidencia de auxilio: clip de video con audio, fotos, WAV original, integridad, personas del evento, coincidencias con fichas, revisión y solicitudes de eliminación |
 | `/voice` | Servicio de detección por micrófono, último análisis e historial reciente |
 | `/history` | Bitácora filtrable con usuario, cámara, caso y resultado |
 | `/users` | Usuarios y permisos por rol |
@@ -75,13 +120,13 @@ Los parámetros `case_id`, `match_id`, `camera_id` y `alert_id` permiten enlaces
 ## Demostración de principio a fin
 
 1. Abrir `/monitor` y seleccionar **Elena Robles (ficticia)**, folio `BUS-2026-0184`.
-2. Consultar sus referencias y las detecciones: `CAM-003` a las 10:21:14, `CAM-007` a las 10:23:02 y `CAM-012` a las 10:25:41.
-3. Abrir una detección en **Coincidencias**. Comparar referencia y captura; validar como posible coincidencia, descartar o solicitar revisión. Usuario, estado y hora quedan registrados en la bitácora.
-4. Abrir **Mapa y seguimiento**. La secuencia muestra puntos de detección y relaciones temporales discontinuas. **No representa un recorrido físico ni una posición actual.** Las detecciones descartadas permanecen consultables y se excluyen del resumen de posibles coincidencias.
-5. Ir a `/voice` y pulsar **INICIAR MONITOREO**. No se escribe ninguna frase: el sistema escucha el micrófono local.
+2. Consultar sus referencias y las detecciones: `CAM-004` a las 10:21:14, `CAM-007` a las 10:23:02 y `CAM-008` a las 10:25:41 (las tres cámaras del equipo, a pocos metros entre sí).
+3. Abrir una detección en **Coincidencias**. Comparar lado a lado la ficha y la captura: parecido facial, edad, ropa, fecha y lugar. El operador descarta o solicita revisión; sólo un supervisor valida. Usuario, estado y hora quedan registrados en la bitácora.
+4. Abrir **Mapa y seguimiento**. El mapa une las detecciones en orden, dibuja el trayecto estimado (por calles con token de Mapbox), marca la **última posición conocida** con un anillo y dice si cada tramo era posible a pie o en vehículo. Es una estimación: cada punto sigue pendiente de validación. Las detecciones descartadas salen del trayecto.
+5. Ir a `/voice`: la detección ya está escuchando (arranca sola con NEXO). No se escribe ninguna frase: el sistema escucha el micrófono local.
 6. Conversar con normalidad. Una narración pasada como `ayer necesité ayuda con una tarea` se clasifica NORMAL y no genera evidencia.
-7. Decir una petición actual, por ejemplo `por favor déjame, me están siguiendo`. El sistema crea `EVENT-AAAAMMDD-NNNNN`, conserva el audio alrededor del momento, calcula su SHA-256 y lo envía a revisión.
-8. Abrir `/alerts`, pulsar **Revisar**, escuchar la evidencia y elegir **CONFIRMAR PARA ATENCIÓN**, **MARCAR FALSO POSITIVO**, **ENVIAR A REVISIÓN** o **SOLICITAR ELIMINACIÓN**. No existe un botón de borrado: un supervisor distinto aprueba o rechaza la solicitud.
+7. Decir una petición actual, por ejemplo `por favor déjame, me están siguiendo`. El sistema crea `EVENT-AAAAMMDD-NNNNN` y, sin que nadie lo pida, conserva 5 s antes y 5 s después de la frase: el clip de video con audio, el WAV original y fotos; calcula sus SHA-256 y lo envía a revisión. El encabezado de todas las páginas avisa del evento.
+8. Abrir `/alerts` (o el aviso del encabezado), ver el clip, las fotos y las personas del evento, y elegir **CONFIRMAR PARA ATENCIÓN**, **MARCAR FALSO POSITIVO**, **ENVIAR A REVISIÓN** o **SOLICITAR ELIMINACIÓN**. No existe un botón de borrado: un supervisor distinto aprueba o rechaza la solicitud.
 9. Probar **Nueva búsqueda**. Admite datos desconocidos y hasta cinco imágenes PNG, JPG o WebP de 5 MB cada una. Es obligatorio indicar un nombre o escribir «Persona desconocida». Las referencias se mantienen en memoria; su huella facial se calcula al comparar una ficha importada.
 10. El menú de cuenta permite cambiar entre sesiones de prueba. El Operador puede gestionar búsquedas y revisiones; Supervisor también puede editar preferencias y frases; Administrador puede modificar permisos de otros usuarios. Las funciones de servicio comprueban el permiso antes de mutar datos.
 
@@ -129,9 +174,9 @@ FastAPI está disponible a través de `nicegui.app` si después se necesitan end
 ## Datos, sesiones y límites de esta versión
 
 - Todos los nombres son ficticios. Los retratos y capturas son **ilustraciones vectoriales sintéticas**, no fotografías de personas reales. El módulo de voz trabaja exclusivamente con audio real del micrófono: no existen campos para escribir frases de prueba.
-- El módulo de voz permite micrófono local y transcripción con faster-whisper. El reconocimiento facial es real sobre fotografías de fichas y casos y sobre la webcam del equipo (`/live`); la red CCTV y el seguimiento continúan simulados. Los estados y similitudes son ejemplos para revisión humana. Confirmar un evento no confirma un delito.
-- La aplicación trabaja en memoria del proceso; sin base de datos, los cambios y la bitácora **se restablecen al reiniciar**, y cada instancia sólo ve lo suyo. El almacenamiento de sesión de NiceGUI está en `.nicegui/`, excluido de Git.
-- Con PostgreSQL disponible (ver «Base de datos compartida del equipo» abajo), NEXO sincroniza casos, cámaras, detecciones y la bitácora cada `DB_SYNC_SECONDS`, así que sobreviven a un reinicio y las cuatro personas del equipo ven el mismo historial sin importar desde qué instancia se generó.
+- El módulo de voz permite micrófono local y transcripción con faster-whisper. El reconocimiento facial es real sobre fotografías de fichas y casos y sobre las cámaras del equipo (`/live`: laptop, USB y celular); las demás cámaras de la red siguen simuladas. Los estados y similitudes son ejemplos para revisión humana. Confirmar un evento no confirma un delito.
+- Lo registrado se guarda en la base local SQLite `data/nexo.db` (excluida de Git) y **sobrevive a un reinicio** sin Docker ni instalaciones. Sin compartir una base, cada instancia sólo ve lo suyo. El almacenamiento de sesión de NiceGUI está en `.nicegui/`, excluido de Git.
+- Con PostgreSQL disponible (ver «Base de datos compartida del equipo» abajo), NEXO además sincroniza casos, cámaras, detecciones y la bitácora cada `DB_SYNC_SECONDS`, así que las cuatro personas del equipo ven el mismo historial sin importar desde qué instancia se generó.
 - El selector de cuenta sirve para demostrar roles; **no es autenticación de producción**. La app no incluye SSO, gestión de credenciales, retención de evidencias ni auditoría inmutable. Estos puntos deben implementarse en los adaptadores de seguridad/backend antes de usar datos reales.
 - Las preferencias de configuración se guardan como valores de referencia; no activan servicios ni políticas reales.
 - Las escenas CCTV son estáticas. La actualización del monitor consulta los servicios simulados cada 15 segundos y la tabla de alertas cada 10 segundos.
@@ -145,7 +190,9 @@ python -m unittest discover -s tests -v
 
 Las pruebas usan el simulador de usuarios de NiceGUI y `unittest`, sin dependencias de desarrollo adicionales. Recorren las once vistas, filtran casos, registran uno nuevo, cambian revisiones, prueban la cámara desconectada, ejecutan el flujo de voz completo (buffer, transcripción, contexto, evidencia, integridad, revisión y eliminación autorizada) y verifican restricciones de permisos y entradas inválidas. Los datos y la carpeta de evidencia del test están aislados del servidor en ejecución.
 
-El arranque y las once rutas también fueron comprobados mediante HTTP. La revisión visual automatizada en un navegador real queda pendiente cuando se disponga de una sesión de navegador conectada.
+`tests/test_event_evidence.py` recorre la evidencia automática con cuadros y audio sintéticos (clip de 10 s centrado en la frase, audio AAC dentro del MP4, SHA-256 de audio y video, cámara de respaldo, otros ángulos, fotos antes y después de la frase); `tests/test_route_and_fichas.py`, el trayecto (orden, paradas, tramos imposibles, seguimiento de las personas de un evento) y el cotejo con fichas (comparación automática, distancia y tiempo desde la desaparición, rasgos visibles, búsqueda sin crear candidatos); `tests/test_local_db.py`, la base local (ida y vuelta completa simulando un reinicio). Ninguna necesita cámara, micrófono ni modelos.
+
+El arranque y las rutas también se comprobaron en un navegador real: reproducción del clip con audio en `/alerts`, comparación lado a lado, trayecto por calles con Mapbox y en línea recta con MapLibre (sin token), y búsqueda por ficha.
 
 Referencia del framework: [documentación oficial de NiceGUI](https://nicegui.io/documentation).
 
@@ -153,7 +200,7 @@ Referencia del framework: [documentación oficial de NiceGUI](https://nicegui.io
 
 `docker-compose.yml` levanta PostgreSQL con pgvector y, en el puerto `8082`, Adminer
 para revisar las tablas desde el navegador. Es **opcional**: sin ella, NEXO funciona
-igual que antes, sólo en memoria y por instancia.
+igual, con su base local SQLite (`data/nexo.db`, ver «Base de datos local» más abajo).
 
 ```bash
 docker compose up -d postgres_db
@@ -181,10 +228,104 @@ las que registraron las demás, así que las cuatro personas terminan viendo el 
 historial sin importar quién cerró su sesión. Desactívalo con `NEXO_DB_SYNC=0` si por
 algún motivo no quieres que una instancia sincronice.
 
-Sin conexión (contenedor apagado, sin red, credenciales incorrectas) la aplicación
-**no se cae**: sigue funcionando sólo en memoria, reintentando solo cada
-`DB_SYNC_SECONDS` y avisando en la consola del servidor
-(`services/db_sync.py:database.status` queda en `DESCONECTADA` o `ERROR`).
+Sin conexión (contenedor apagado, sin red, credenciales incorrectas, o sin los paquetes
+`psycopg`/`pgvector`) la aplicación **no se cae**: sigue funcionando con su base local,
+reintentando solo cada `DB_SYNC_SECONDS` y avisando en la consola del servidor
+(`services/db_sync.py:database.status` queda en `DESCONECTADA` o `ERROR`). Con la base
+compartida conectada, los rostros de cada evento de auxilio también se suben
+(`capturas_alerta`) para que la búsqueda por ficha de las demás instancias los encuentre.
+
+## Base de datos local (sin Docker)
+
+`services/local_db.py` guarda en `data/nexo.db` (SQLite, incluido en Python) los
+expedientes, detecciones, coincidencias, evidencias, fotos de eventos, personas vistas en
+eventos, perfiles de búsqueda, candidatos, reapariciones, solicitudes de eliminación,
+alertas, importaciones, usuarios, preferencias y la bitácora completa. Al arrancar carga lo
+guardado sobre los datos de demostración (la base manda) y después guarda cada
+`NEXO_LOCAL_DB_SAVE_SECONDS` (3 s) sólo lo que cambió, y una última vez al cerrar. La
+conversación ordinaria nunca se guarda: sólo los eventos de voz que sostienen una alerta.
+Los archivos de evidencia (WAV, MP4, JPG) siguen en `evidence/`.
+
+- Empezar de cero: detén NEXO y borra `data/nexo.db` (y `evidence/` si también quieres
+  descartar la evidencia de prueba).
+- Desactivarla: `NEXO_LOCAL_DB=0`. Otra ubicación: `NEXO_LOCAL_DB_PATH`.
+- Si la carpeta del proyecto se sincroniza con OneDrive y la abren varias computadoras a la
+  vez, guarda la base fuera de la carpeta sincronizada (un archivo SQLite abierto en dos
+  equipos puede dañarse), por ejemplo en `.env`:
+  `NEXO_LOCAL_DB_PATH=C:\Users\<usuario>\AppData\Local\NEXO\nexo.db`. Para compartir datos
+  entre equipos usa PostgreSQL.
+
+## Monitoreo continuo y evidencia de video
+
+Las cámaras del equipo (laptop `CAM-008`, webcam USB `CAM-007` y celular enlazado `CAM-004`)
+y el micrófono se incorporan solos al iniciar NEXO (`services/camera_monitor_service.py`) y
+se reintentan cada 20 s si están ocupados o desconectados. La cámara transmite aunque el
+modelo facial no esté descargado: el reconocimiento es una capa aparte que se carga en
+segundo plano. `/live` permite **pausar** una cámara (queda libre y el monitoreo no la reabre
+sola) y reanudarla.
+
+Cada cámara guarda en memoria sus últimos ~40 s de video (hasta 12 cuadros por segundo, sin
+espejo). Cuando la voz detecta una posible solicitud de auxilio:
+
+1. Se ubica el **instante exacto de la frase** con los segmentos de Whisper, no el borde de la
+   ventana analizada, y se alinea con el reloj de las cámaras.
+2. Se conserva el audio de `EVIDENCE_PRE_SECONDS` antes a `EVIDENCE_POST_SECONDS` después
+   (5 s y 5 s) como WAV original con su SHA-256.
+3. Se escribe el **clip MP4 (H.264 + AAC)** de esos mismos 10 s con el audio sincronizado, con
+   la marca de tiempo real de cada cuadro, y su SHA-256. Si la cámara del micrófono no
+   transmite, se usa otra cámara del equipo en vivo; las demás cámaras en vivo guardan su
+   ángulo del mismo instante.
+4. Se guardan **fotos** a -2, 0, +1, +2 y +4 s de la frase; con el modelo facial, cada persona
+   que aparece queda como persona del evento (recorte, edad aparente, color de la ropa).
+5. Esas personas se comparan solas con todas las fichas activas y se buscan durante
+   `NEXO_EVENT_TRACKING_MINUTES` (60) en las demás cámaras del equipo (seguimiento
+   provisional). «Iniciar seguimiento» en `/alerts` lo confirma por 12 h; un falso positivo lo
+   detiene.
+
+Todo lo anterior comparte el mismo `event_id` y aparece en `/alerts?event_id=…`; el
+encabezado de todas las páginas avisa de los eventos sin revisar. Variables:
+`NEXO_EVIDENCE_PRE_SECONDS`, `NEXO_EVIDENCE_POST_SECONDS`, `NEXO_CAMERA_AUTOSTART`.
+
+## Mapa: trayecto y última posición
+
+`/tracking` (y el detalle de cada caso) une en orden cronológico dónde se vio a la persona
+(`services/route_service.py`): las detecciones de una ficha (sin las descartadas) y sus
+candidatos vigentes, o, para una persona vista en un evento, el evento y sus reapariciones en
+otras cámaras. Para cada tramo calcula la distancia real, el tiempo y la velocidad implícita,
+y dice si era **posible a pie**, **en vehículo** o **no es posible en ese tiempo** (en cuyo
+caso una de las dos observaciones probablemente es un falso positivo). El mapa dibuja paradas
+numeradas, flechas de dirección y un anillo en la **última posición conocida**, y sugiere las
+cámaras contiguas donde seguir buscando. Se actualiza cada 5 s: si alguien camina de la cámara
+A a la B, el trayecto crece mientras se mira.
+
+Con token de Mapbox cada tramo se traza **por calles** (Mapbox Directions, a pie o en
+vehículo); sin token, en línea recta sobre MapLibre. Es un trayecto estimado: el camino exacto
+entre dos cámaras no se observa. La posición real de las cámaras del equipo se configura en
+`.env`: `NEXO_CAMERA_LATLNG`, `NEXO_CAMERA_2_LATLNG`, `NEXO_CAMERA_3_LATLNG` (por defecto,
+tres puntos a pocos metros dentro del Tec de Nuevo León).
+
+## Búsqueda por ficha
+
+`/search` responde «¿esta persona ya aparece en lo que registraron las cámaras?». La
+referencia puede ser una ficha registrada, una ficha nueva (imagen o PDF, se lee con OCR y se
+recorta la foto) o una **fotografía autorizada** (hay que confirmarlo). Se compara contra las
+personas vistas en eventos de auxilio, las detecciones con huella facial, la base compartida
+si está conectada, y las demás fichas (posibles duplicados). Consultar no crea candidatos: el
+operador envía a revisión lo que corresponda.
+
+Cada resultado se muestra **lado a lado** (`components/face_comparison.py`): la ficha y la
+persona de la cámara, el **parecido facial** (cuánto se parecen los dos rostros según el
+modelo; no es la probabilidad de identidad), y una tabla ficha-frente-a-cámara con edad
+(declarada vs. aparente), vestimenta (declarada vs. color de la ropa superior), fecha
+(desaparición vs. captura) y lugar (último lugar conocido vs. cámara, con distancia real y si
+era alcanzable en el tiempo transcurrido). La misma comparación aparece en `/matches`,
+supervisión, la evidencia de un evento y la importación de fichas. Nada de eso descarta a
+nadie ni confirma una identidad.
+
+Además, sin que nadie lo pida: las personas de un evento se comparan con todas las fichas
+activas, y una ficha nueva se compara con lo que las cámaras ya guardaron (si el modelo facial
+está cargado). Requiere el modelo facial, que NEXO descarga solo la primera vez que arranca
+(la página se habilita sola al terminar).
 
 ## Importar alertas de búsqueda (OCR)
 
@@ -241,8 +382,9 @@ disponible, el módulo lo dice y el operador captura los datos a mano.
    `SIN_ROSTRO_DETECTADO`, y si el modelo no puede cargarse, `ERROR_MODULO_FACIAL`
    con el motivo. Sin InsightFace instalado el estado sigue siendo
    `PENDIENTE_MODULO_FACIAL` y **no se asigna ningún nivel**: inventarlo sería
-   fabricar una coincidencia que nadie calculó. La búsqueda en cámaras queda
-   pendiente del módulo de video.
+   fabricar una coincidencia que nadie calculó. Con la huella lista, la ficha también
+   se busca en lo que guardaron las cámaras (**Apariciones en cámaras**: personas de
+   eventos, detecciones y base compartida), con la comparación lado a lado.
 3. **Contextual** — cruza el lugar reportado con las cámaras de la zona, la fecha
    con las detecciones dentro de ±15 días (`IMPORT_DATE_WINDOW_DAYS`) y resume las
    cámaras relacionadas.
@@ -266,15 +408,16 @@ fotografía, y dos fotografías de la misma persona dan huellas parecidas.
 
 ### Instalación y autoprueba
 
-`requirements.txt` ya incluye `insightface` y `onnxruntime`. Después de instalarlo:
+`requirements.txt` ya incluye `insightface` y `onnxruntime`. No hace falta ejecutar nada más:
+NEXO descarga el modelo solo la primera vez que arranca (`services/model_setup.py`), en
+`~/.insightface/models/buffalo_l`, fuera del proyecto para que no viaje en el repositorio ni en
+los ZIP. Para descargarlo por adelantado y comprobar la instalación:
 
 ```bash
 python -m services.face_engine
 ```
 
-Descarga el modelo una sola vez (~330 MB) en `~/.insightface/models/buffalo_l`,
-fuera del proyecto para que no viaje en el repositorio ni en los ZIP, y ejecuta una
-autoprueba con la foto de ejemplo de la librería:
+Descarga el modelo si falta y ejecuta una autoprueba con la foto de ejemplo de la librería:
 
 ```text
 Motor: InsightFace buffalo_l
@@ -319,10 +462,11 @@ congelarse.
 
 ### En vivo desde la web (`/live`)
 
-Todo el flujo se hace desde el navegador, con la webcam del equipo donde corre NEXO:
+Todo el flujo se hace desde el navegador, con las cámaras del equipo donde corre NEXO:
 
-1. **Reconocimiento en vivo** → **INICIAR RECONOCIMIENTO**. La cámara se asocia a una
-   cámara de la red (por defecto `CAM-008 — Pasillo B`, la misma de la voz).
+1. **Reconocimiento en vivo**: las cámaras ya están transmitiendo (arrancan solas con NEXO).
+   Cada una se asocia a una cámara de la red (la de la laptop a `CAM-008 — Pasillo B`, la
+   misma del micrófono). **PAUSAR** libera una cámara y **REANUDAR** la vuelve a encender.
 2. **Registrar persona con esta cámara** toma la foto del rostro más visible y abre el
    formulario del caso con esa foto; también se puede registrar con una fotografía
    subida, o importando una ficha en `/cases/import-alert`.
@@ -334,14 +478,14 @@ Todo el flujo se hace desde el navegador, con la webcam del equipo donde corre N
    `/tracking`, en el monitor y en los eventos de la cámara, y queda en la bitácora. Se
    crea una por caso y cámara cada 30 s (`LIVE_DETECTION_COOLDOWN_SECONDS`); dentro de
    esa ventana se conserva la mejor captura.
-5. **DETENER** libera la cámara. Mientras está encendida, la cabecera de todas las
-   páginas muestra «CÁMARA EN VIVO».
+5. Mientras una cámara está encendida, la cabecera de todas las páginas muestra
+   «CÁMARA EN VIVO».
 
-Si durante el reconocimiento la voz detecta una posible solicitud de auxilio en la misma
-cámara, el evento guarda los rostros que estaban en cuadro en ese momento (se ven en
-`/alerts`) y `register_capture_in_database` usa la huella real en lugar del vector
-aleatorio. Los cuadros sólo existen en memoria; se conserva únicamente el recorte del
-rostro de cada posible coincidencia. `NEXO_CAMERA_INDEX` elige otra webcam.
+Si la voz detecta una posible solicitud de auxilio, el evento guarda el clip de 5 s antes y
+5 s después con su audio, las fotos y los rostros que estaban en cuadro (se ven en
+`/alerts`); ver «Monitoreo continuo y evidencia de video». Fuera de un evento, los cuadros
+sólo existen en un anillo en memoria que se sobrescribe; se conserva únicamente el recorte
+del rostro de cada posible coincidencia. `NEXO_CAMERA_INDEX` elige otra webcam.
 
 ### Umbrales y configuración
 
@@ -360,8 +504,9 @@ identidad: todo queda pendiente de validación humana.
 Variables en `config.py`: `FACE_MATCH_THRESHOLD`, `FACE_LEVEL_MEDIUM`,
 `FACE_LEVEL_HIGH`, `FACE_MIN_DET_SCORE` (0.5), `FACE_MODEL` (`buffalo_l`),
 `FACE_MODEL_ROOT` (`~/.insightface`) y `FACE_AUTO_DOWNLOAD` (`true`: si falta el
-modelo se descarga en el primer uso; con `false` se muestra el comando para
-descargarlo).
+modelo se descarga solo; con `false` se muestra el comando para descargarlo). En `.env`,
+`NEXO_MODELS_AUTOPREPARE=false` evita que los modelos se preparen al arrancar (entonces se
+cargan en el primer uso).
 
 ### Licencia y privacidad
 
@@ -405,6 +550,13 @@ Si este entorno no tiene pip, usa el instalador local existente:
 El módulo funciona **únicamente con audio capturado del micrófono**. La interfaz
 no ofrece ningún campo para escribir frases ni simular eventos.
 
+La escucha no es una pantalla aparte: pertenece a la cámara. Sobre la imagen de cada
+cámara del equipo se lee su estado de escucha, y cuando oye una posible solicitud de
+auxilio la propia cámara anuncia que conservó ese instante. Al abrir la cámara en
+*Red de cámaras* aparecen su escucha, el último análisis y los eventos conservados
+—imagen, audio y video del mismo `event_id`— con el enlace para que una autoridad los
+revise y con la última ubicación registrada para continuar el seguimiento en el mapa.
+
 ```text
 Micrófono
   ↓ captura continua en un buffer circular en memoria
@@ -425,8 +577,9 @@ EvidenceEvent + audio original + SHA-256
 
 1. Abre `/voice`. La parte superior muestra el estado del servicio, si hay
    micrófono disponible y la cámara asociada (`CAM-008 — Pasillo B`).
-2. Pulsa **INICIAR MONITOREO** y permite el acceso al micrófono en Windows.
-   El indicador de nivel confirma que entra audio.
+2. La detección ya está escuchando: arranca sola con NEXO (si Windows pregunta, permite el
+   acceso al micrófono). El indicador de nivel confirma que entra audio. **PAUSAR
+   DETECCIÓN** libera el micrófono y **REANUDAR DETECCIÓN** lo vuelve a abrir.
 3. Conversen dos o tres personas con normalidad. Cada ventana analizada muestra
    transcripción, análisis, señales y resultado; nada se guarda en disco.
 
@@ -438,10 +591,13 @@ EvidenceEvent + audio original + SHA-256
 | «suéltame, ayuda» con cambio acústico | ALTA_PRIORIDAD | Sí |
 
 4. Cuando se crea un evento, la consola indica `EVENT-AAAAMMDD-NNNNN`, que el
-   audio quedó protegido y que está pendiente de revisión.
-5. Abre `/alerts`, pulsa **Revisar** y reproduce la evidencia. El panel muestra
-   duración, verificación de integridad, transcripción, análisis y el estado del
-   video (**Pendiente de integración**).
+   audio y el video quedaron protegidos y que está pendiente de revisión. El encabezado
+   de todas las páginas lo avisa.
+5. Abre `/alerts`, pulsa **Revisar** (o el aviso del encabezado) y reproduce el clip: 5 s
+   antes y 5 s después de la frase, con su audio. El panel muestra las fotos, el WAV
+   original, la verificación de integridad de ambos, las personas del evento, sus
+   coincidencias con fichas, la transcripción y el análisis. Si ninguna cámara transmitía,
+   el video queda **Pendiente de integración** y el audio sí se conserva.
 6. Prueba **MARCAR FALSO POSITIVO**: cambia la clasificación de revisión y el
    audio permanece.
 7. Prueba **SOLICITAR ELIMINACIÓN** con un motivo. El evento pasa a
@@ -455,16 +611,18 @@ EvidenceEvent + audio original + SHA-256
 ### Evidencia, integridad y video
 
 Cuando la clasificación es POSIBLE_AUXILIO o ALTA_PRIORIDAD se crea un
-`EvidenceEvent` y se escribe un único archivo WAV:
+`EvidenceEvent` con su audio, su clip de video y sus fotos:
 
 ```text
 evidence/
-├── audio/EVENT-20260923-00001.wav
-└── video/        (reservado para el módulo de cámaras)
+├── audio/EVENT-20260923-00001.wav            audio original (5 s antes y 5 s después)
+├── video/EVENT-20260923-00001.mp4            clip H.264 + AAC de la cámara del evento
+├── video/EVENT-20260923-00001-CAM-007.mp4    otro ángulo del mismo instante (si lo hay)
+└── frames/EVENT-20260923-00001-F01.jpg …     fotos a -2, 0, +1, +2 y +4 s de la frase
 ```
 
-- El fragmento incluye aproximadamente 10 segundos anteriores, la ventana donde
-  ocurrió la posible solicitud y 10 segundos posteriores.
+- El fragmento abarca `EVIDENCE_PRE_SECONDS` (5) antes y `EVIDENCE_POST_SECONDS` (5)
+  después del instante en que se dijo la frase, localizado con los segmentos de Whisper.
 - El identificador es único por día y **nunca se sobrescribe un archivo**: si el
   nombre existe, se rechaza la escritura.
 - Al guardarlo se calcula un **SHA-256** que se conserva en el evento. `/alerts`
@@ -472,10 +630,12 @@ evidence/
   «✓ Archivo original verificado» sólo si coincide.
 - El original es inmutable: la interfaz no edita, recorta ni reemplaza audio. Una
   versión procesada debe crearse como copia derivada, conservando el original.
-- El evento reserva `video_file`, `video_start_timestamp`, `video_end_timestamp`
-  y `video_status = "PENDING_INTEGRATION"`. El módulo de cámaras integrará el
-  video con `attach_video_evidence(event_id, video_path, start_timestamp, end_timestamp)`
-  de `services/evidence_service.py`; audio y video comparten el mismo `event_id`.
+- El clip se asocia con `attach_video_evidence(...)` de `services/evidence_service.py`
+  (`video_file`, `video_start_timestamp`, `video_end_timestamp`, `video_status = "ATTACHED"`,
+  `video_has_audio`, `video_camera_id` y `video_integrity_hash`); audio, video y fotos
+  comparten el mismo `event_id`. `/alerts` verifica también el SHA-256 del video y ofrece
+  descargar el MP4 original. Sin imagen de ninguna cámara, `video_status` queda en
+  `PENDING_INTEGRATION`.
 
 ### Roles y control de eliminación
 
@@ -511,7 +671,7 @@ esa operación permanece aunque más adelante se aplique una política de borrad
 
 Configuración en `config.py`: `VOICE_MODEL` (`tiny`, `base` o `small`),
 `VOICE_LANGUAGE='es'`, `AUDIO_SAMPLE_RATE=16000`, `AUDIO_WINDOW_SECONDS=6`,
-`AUDIO_OVERLAP_SECONDS=2`, `EVIDENCE_PRE_SECONDS=10`, `EVIDENCE_POST_SECONDS=10`,
+`AUDIO_OVERLAP_SECONDS=2`, `EVIDENCE_PRE_SECONDS=5`, `EVIDENCE_POST_SECONDS=5`,
 `AUDIO_RING_SECONDS` y `DEFAULT_CAMERA_ID`.
 
 Whisper usa CPU/int8 y carga el modelo en la primera transcripción; puede
@@ -536,8 +696,10 @@ y clasificación, y `process_text` sigue siendo la entrada compartida.
 `services/voice_integrations.py` ofrece `request_person_detection`,
 `start_tracking_from_alert` y `execute_authority_command`; sus resultados
 incluyen `mock=True`, salvo `request_person_detection`, que es real mientras el
-reconocimiento en vivo (`/live`) usa esa cámara. No se ha implementado la grabación de
-video ni el seguimiento entre cámaras: sólo quedan preparados los puntos de integración.
+reconocimiento en vivo (`/live`) usa esa cámara. La grabación del clip de video y el
+seguimiento de las personas del evento entre las cámaras del equipo ya son reales
+(`services/camera_monitor_service.py`, `services/tracking_service.py`); el seguimiento en
+cámaras de la red simuladas sigue siendo un punto de integración.
 
 El selector de usuario NO autentica: es una demostración de roles. Los permisos
 (`review`, `deletion.request`, `deletion.approve`, `users`) se comprueban en los
@@ -676,10 +838,9 @@ Modelo configurable: [Qwen2.5 3B](https://ollama.com/library/qwen2.5:3b).
   El contexto previo no se copia al evento persistente.
 - AMBIGUO se considera relevante para revisión de la demo: conserva sólo su frase
   y evaluación en el historial, limitado a 100 eventos, y no genera archivo.
-- La evidencia (`EvidenceEvent`, transcripción, análisis, hash y estado de
-  revisión) vive en el repositorio en memoria hasta reiniciar el proceso; el
-  archivo WAV sí permanece en `evidence/audio/`. No se implementó una base de
-  datos: al reiniciar, los eventos deben volver a crearse aunque el audio siga ahí.
+- La evidencia (`EvidenceEvent`, transcripción, análisis, hashes, fotos, personas del
+  evento y estado de revisión) se guarda en la base local `data/nexo.db` y sobrevive a un
+  reinicio; los archivos WAV, MP4 y JPG permanecen en `evidence/`.
 - La bitácora conserva identificador, clasificación, prioridad y acciones, sin
   copiar conversaciones normales. Las cuentas continúan siendo de demostración.
 - Por defecto el proveedor es local; cambiar `AI_CONTEXT_URL` a un servidor remoto

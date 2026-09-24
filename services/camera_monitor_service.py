@@ -18,6 +18,17 @@ import time
 from datetime import datetime, timedelta
 import config
 from services import store
+from services.video_ring import VideoRing  # noqa: F401  (se reexporta: otros módulos lo importan de aquí)
+
+
+# Dispositivos que corresponden a cada puesto. Cambiar de perfil no es cambiar de pestaña:
+# el operador vigila (cámaras del equipo y escucha continua de auxilio), el supervisor sólo
+# revisa lo ya registrado y el administrador no vigila nada —su micrófono queda libre para el
+# asistente de voz, que graba sólo mientras se mantiene pulsado y nunca conserva el audio.
+ROLE_DEVICES = {'Operador': {'camera', 'microphone'},
+                'Supervisor': set(),
+                'Administrador': set()}
+DEFAULT_ROLE = 'Operador'
 
 
 def autostart_enabled():
@@ -27,61 +38,6 @@ def autostart_enabled():
     con las sesiones que ellas mismas arrancan, y el dispositivo es de uso exclusivo.
     """
     return config.CAMERA_AUTOSTART and 'PYTEST_CURRENT_TEST' not in os.environ
-
-
-class VideoRing:
-    """Anillo de fotogramas en memoria. Lo que no se reclama, se pierde.
-
-    Los cuadros se guardan comprimidos en JPEG: en crudo, medio minuto de una cámara a
-    640x480 ocuparía cientos de megabytes por cámara, y aquí sólo hacen falta para poder
-    reconstruir los segundos alrededor de un evento.
-    """
-
-    def __init__(self, seconds=None, fps=None):
-        self.seconds = seconds or config.VIDEO_RING_SECONDS
-        self.fps = fps or config.VIDEO_RING_FPS
-        self.capacity = max(1, int(self.seconds * self.fps))
-        self.frames = []  # [(monotonic, wall_clock, jpeg_bytes)]
-        self.lock = threading.Lock()
-
-    @staticmethod
-    def encode(frame):
-        import cv2
-        ok, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
-        return buffer.tobytes() if ok else None
-
-    @staticmethod
-    def decode(payload):
-        import cv2
-        import numpy as np
-        return cv2.imdecode(np.frombuffer(payload, dtype='uint8'), cv2.IMREAD_COLOR)
-
-    def write(self, frame, when=None):
-        payload = frame if isinstance(frame, (bytes, bytearray)) else self.encode(frame)
-        if payload is None:
-            return
-        now = time.monotonic()
-        with self.lock:
-            self.frames.append((now, when or datetime.now(), payload))
-            # Se descarta por antigüedad y por tamaño: el anillo nunca crece sin límite.
-            horizon = now - self.seconds
-            self.frames = [f for f in self.frames if f[0] >= horizon][-self.capacity:]
-
-    def window(self, pre_seconds=None, post_seconds=None, reference=None):
-        """Fotogramas alrededor de un instante. Devuelve lo que el anillo todavía conserva."""
-        pre = config.VIDEO_PRE_EVENT_SECONDS if pre_seconds is None else pre_seconds
-        post = config.VIDEO_POST_EVENT_SECONDS if post_seconds is None else post_seconds
-        mark = reference if reference is not None else time.monotonic()
-        with self.lock:
-            return [f for f in self.frames if mark - pre <= f[0] <= mark + post]
-
-    def latest(self):
-        with self.lock:
-            return self.frames[-1] if self.frames else None
-
-    def clear(self):
-        with self.lock:
-            self.frames.clear()
 
 
 class CameraStreamAdapter:
@@ -122,11 +78,32 @@ class LiveWebcamAdapter(CameraStreamAdapter):
     """
 
     kind = 'webcam'
+    IDLE_REASON = ('La cámara del equipo no estaba transmitiendo (en pausa o sin señal): el evento '
+                   'conserva el audio y la transcripción, sin video de esta cámara.')
+
+    @property
+    def ring(self):
+        """El anillo lo llena el propio hilo de captura de la ranura que transmite esta cámara,
+        con la marca de tiempo exacta de cada cuadro. Sin transmisión, un anillo vacío."""
+        from services.live_recognition_service import running_for_camera
+        instance = running_for_camera(self.camera_id)
+        return instance.ring if instance is not None else self._idle_ring
+
+    @ring.setter
+    def ring(self, value):
+        self._idle_ring = value
 
     @property
     def active(self):
         from services.live_recognition_service import running_for_camera
         return running_for_camera(self.camera_id) is not None
+
+    def poll(self):
+        # El hilo de captura ya escribe en el anillo; aquí sólo se actualiza el motivo, sin
+        # copiar cuadros que nadie usaría.
+        from services.live_recognition_service import running_for_camera
+        self.unavailable_reason = '' if running_for_camera(self.camera_id) else self.IDLE_REASON
+        return None
 
     def read(self):
         # Hay dos cámaras físicas: la de la laptop y la webcam USB. Cada una atiende a su
@@ -134,8 +111,7 @@ class LiveWebcamAdapter(CameraStreamAdapter):
         from services.live_recognition_service import running_for_camera
         instance = running_for_camera(self.camera_id)
         if instance is None:
-            self.unavailable_reason = ('La cámara del equipo no está entregando imagen en este momento. '
-                                       'El fragmento de video queda pendiente de integración.')
+            self.unavailable_reason = self.IDLE_REASON
             return None
         self.unavailable_reason = ''
         with instance._lock:
@@ -187,14 +163,28 @@ class CameraMonitor:
         self.audio_error = ''
         self._audio = None
         self._last_audio_attempt = 0.0
+        # Rol de la sesión de demostración en curso: decide qué dispositivos puede abrir el
+        # monitoreo continuo. Ver ROLE_DEVICES y apply_role().
+        self.role = DEFAULT_ROLE
 
     def adapter(self, camera_id):
+        """La fuente de una cámara.
+
+        En /live se le puede asignar a una cámara del equipo cualquier cámara de la red: mientras
+        transmita con ese identificador, manda la imagen real aunque en la red figure como
+        simulada. Al dejar de transmitir, la cámara vuelve a su fuente de siempre.
+        """
         from services.cameras_service import get_camera
+        from services.live_recognition_service import running_for_camera
+        if running_for_camera(camera_id) is not None:
+            kind = 'webcam'
+        else:
+            camera = get_camera(camera_id)
+            kind = camera.stream_source if camera else 'simulated'
+        wanted = ADAPTERS.get(kind, SimulatedStreamAdapter)
         with self._lock:
-            if camera_id not in self._adapters:
-                camera = get_camera(camera_id)
-                kind = (camera.stream_source if camera else 'simulated')
-                self._adapters[camera_id] = ADAPTERS.get(kind, SimulatedStreamAdapter)(camera_id)
+            if type(self._adapters.get(camera_id)) is not wanted:
+                self._adapters[camera_id] = wanted(camera_id)
             return self._adapters[camera_id]
 
     def active_cameras(self):
@@ -255,7 +245,7 @@ class CameraMonitor:
         duplica esa lógica: sólo se decide cuándo arrancar.
         """
         from services.live_recognition_service import LIVE_INSTANCES
-        if not autostart_enabled() or self.paused_by:
+        if not autostart_enabled() or self.paused_by or not self.allows('camera'):
             return False
         # Una cámara pausada a mano desde la página en vivo se respeta hasta que la inicien.
         pending = [inst for inst in LIVE_INSTANCES if not inst.running and not inst.paused_by]
@@ -275,6 +265,34 @@ class CameraMonitor:
                 problems.append(f'{instance.name}: {error}')
         self.stream_error = ' · '.join(problems)
         return started
+
+    # ------------------------------------------------------- dispositivos según el puesto
+    def allows(self, device):
+        return device in ROLE_DEVICES.get(self.role, ROLE_DEVICES[DEFAULT_ROLE])
+
+    def apply_role(self, role, actor='Sistema'):
+        """Deja abiertos sólo los dispositivos del puesto que acaba de tomar la sesión.
+
+        Sin esto, lo que encendió el rol anterior seguía corriendo: al pasar de operador a
+        administrador la cámara y la escucha continua quedaban abiertas en una pantalla que
+        ni siquiera las muestra. La liberación es inmediata y el bucle continuo tampoco las
+        reabre, porque consulta este mismo permiso.
+        """
+        from services.live_recognition_service import LIVE_INSTANCES, stop_all
+        self.role = role
+        # Al volver a un puesto que sí vigila, la espera entre reintentos no debe retrasarlo.
+        self._last_attempt = self._last_audio_attempt = 0.0
+        released = []
+        if not self.allows('camera') and any(inst.running for inst in LIVE_INSTANCES):
+            stop_all(actor)
+            released.append('cámaras del equipo')
+        if not self.allows('microphone') and self._audio is not None and self._audio.running:
+            self._audio.stop()
+            released.append('escucha continua de auxilio')
+        if released:
+            store.audit(actor, 'Sesión', f'Cambio a {role}: se liberó ' + ' y '.join(released) + '.',
+                        camera_id=config.DEFAULT_CAMERA_ID, result='LIBERADO')
+        return released
 
     def pause_stream(self, actor='Sistema'):
         """Pausa deliberada. Las cámaras quedan libres y el monitoreo no las reabre solo."""
@@ -315,7 +333,7 @@ class CameraMonitor:
 
     def ensure_audio_stream(self):
         """Arranca la detección de auxilio sin que nadie la pida."""
-        if not autostart_enabled() or self.audio_paused_by:
+        if not autostart_enabled() or self.audio_paused_by or not self.allows('microphone'):
             return False
         session = self.audio_session()
         if session.running:
@@ -383,23 +401,55 @@ class CameraMonitor:
                 'detail': self.stream_error or 'Incorporando la cámara del equipo al monitoreo continuo…'}
 
     # ------------------------------------------------------- captura ligada a un evento
-    def capture_event_evidence(self, event_id, camera_id, reference=None):
-        """Conserva los fotogramas alrededor de un evento y los registra.
+    def evidence_camera(self, camera_id):
+        """Cámara de la que se toma el video de un evento.
 
-        Se piden varios instantes porque uno solo puede salir borroso, de perfil u ocluido.
-        Cuando la fuente no entrega imagen, el fotograma se registra como pendiente de
-        integración: queda constancia de que se intentó, sin fabricar una captura.
+        Es la asociada al micrófono. Si en ese momento no transmite —una computadora sin
+        cámara integrada, o una cámara pausada— se usa otra cámara del equipo que sí esté en
+        vivo: un video de la misma sala es mejor evidencia que ninguno.
+        """
+        from services.live_recognition_service import LIVE_INSTANCES, running_for_camera
+        if running_for_camera(camera_id) is not None:
+            return camera_id
+        live = [inst for inst in LIVE_INSTANCES if inst.running]
+        return live[0].camera_id if live else camera_id
+
+    @staticmethod
+    def _wait_for_post_roll(ring, mark):
+        """Espera a que el anillo tenga los segundos posteriores al evento, con un límite."""
+        if ring.latest() is None:
+            return
+        target = mark + config.VIDEO_POST_EVENT_SECONDS - .25
+        deadline = time.monotonic() + config.VIDEO_POST_EVENT_SECONDS + 2
+        while time.monotonic() < deadline:
+            latest = ring.latest()
+            if latest is None or latest[0] >= target:
+                return
+            time.sleep(.1)
+
+    def capture_event_evidence(self, event_id, camera_id, reference=None, audio=None):
+        """Conserva el clip (video con audio) y las fotos alrededor de un evento.
+
+        El clip abarca VIDEO_PRE_EVENT_SECONDS antes y VIDEO_POST_EVENT_SECONDS después del
+        instante de la frase. Las fotos se piden en varios instantes porque una sola puede
+        salir borrosa, de perfil u ocluida. Cuando la fuente no entrega imagen, cada foto se
+        registra como pendiente de integración: queda constancia de que se intentó, sin
+        fabricar una captura.
         """
         from services.event_frames_service import store_event_frames, write_event_clip
-        adapter = self.adapter(camera_id)
-        # `reference` es el instante del grito, no el momento en que se pide la evidencia:
+        from services.live_recognition_service import LIVE_INSTANCES
+        # `reference` es el instante de la frase, no el momento en que se pide la evidencia:
         # cuando esto se llama ya pasaron los segundos posteriores que el audio esperó.
         mark = time.monotonic() if reference is None else reference
-        window = adapter.ring.window(reference=mark)
+        mark_wall = datetime.now() - timedelta(seconds=time.monotonic() - mark)
+        source = self.evidence_camera(camera_id)
+        adapter = self.adapter(source)
+        ring = adapter.ring
+        self._wait_for_post_roll(ring, mark)
+        window = ring.window(reference=mark)
         captures = []
         for offset in config.EVENT_FRAME_OFFSETS_SECONDS:
-            frame = None
-            when = datetime.now() + timedelta(seconds=offset)
+            frame, when = None, mark_wall + timedelta(seconds=offset)
             if window:
                 target = mark + offset
                 nearest = min(window, key=lambda f: abs(f[0] - target))
@@ -407,25 +457,35 @@ class CameraMonitor:
                     frame, when = nearest[2], nearest[1]
             captures.append({'offset': offset, 'frame': frame, 'timestamp': when,
                              'reason': adapter.unavailable_reason if frame is None else ''})
-        frames = store_event_frames(event_id, camera_id, captures)
-        # El fragmento de video completo, no sólo los fotogramas sueltos: quien revise
-        # necesita ver qué pasó antes y después, no una foto aislada.
-        write_event_clip(event_id, camera_id, window)
+        frames = store_event_frames(event_id, source, captures)
+        # El fragmento completo, no sólo fotos sueltas: quien revise necesita ver y oír qué
+        # pasó antes y después de la frase.
+        write_event_clip(event_id, source, window, audio=audio, reference=mark)
+        # Otros ángulos del mismo instante, si hay más cámaras del equipo transmitiendo.
+        for instance in LIVE_INSTANCES:
+            if instance.running and instance.camera_id != source:
+                other = instance.ring.window(reference=mark)
+                if other:
+                    write_event_clip(event_id, instance.camera_id, other, audio=audio, reference=mark,
+                                     angle=True)
         return frames
 
 
 monitor = CameraMonitor()
 
 
-def capture_event_evidence(event_id, camera_id, reference=None):
+def capture_event_evidence(event_id, camera_id, reference=None, audio=None):
     """Punto único al que el detector de auxilio pide la evidencia visual de un evento.
+
+    `audio` es el mismo fragmento que se guardó como WAV ({'samples', 'rate', 'start_mono'}):
+    se incorpora al clip para que el video se escuche sincronizado.
 
     Un fallo aquí no puede tumbar la detección: el audio y la transcripción ya están a salvo,
     así que el problema se registra y el evento conserva lo que sí pudo obtenerse.
     """
     from services.event_frames_service import process_event_frames
     try:
-        frames = monitor.capture_event_evidence(event_id, camera_id, reference)
+        frames = monitor.capture_event_evidence(event_id, camera_id, reference, audio)
         return frames, process_event_frames(event_id)
     except Exception as error:
         store.audit('Sistema', 'Evidencia',

@@ -1,5 +1,8 @@
 nicegui==3.17.1
 faster-whisper>=1.1,<2
+# Clip de evidencia: MP4 H.264 con el audio AAC sincronizado (verificado con PyAV 18.1).
+# faster-whisper también lo instala, pero NEXO lo usa directamente.
+av>=14,<20
 sounddevice>=0.5,<1
 numpy>=1.26,<3
 pydantic>=2,<3

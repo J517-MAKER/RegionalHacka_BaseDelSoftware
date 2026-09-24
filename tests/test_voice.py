@@ -72,9 +72,12 @@ class VoiceTest(unittest.TestCase):
                     self.assertEqual(event.status, 'PENDIENTE_REVISION')
                     self.assertTrue(start_alert_tracking(alert.id)['mock'])
                     self.assertFalse(alert.tracking_started)
-                count = len(store.alerts)
+                count, logged = len(store.alerts), len(store.logs)
                 self.assertEqual(process_text('mañana tengo clases temprano').intent, 'SIN_COINCIDENCIA')
                 self.assertEqual(len(store.alerts), count)
+                # La conversación ordinaria no deja rastro en la bitácora (con la escucha continua
+                # serían cientos de registros por hora).
+                self.assertEqual(len(store.logs), logged)
                 with self.assertRaises(ValueError):
                     process_text('  ')
         finally:

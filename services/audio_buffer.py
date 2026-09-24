@@ -31,16 +31,24 @@ class AudioRing:
 
     def read(self, start, end):
         """Absolute sample range, clipped to what the buffer still holds."""
+        return self.read_span(start, end)[1]
+
+    def read_span(self, start, end):
+        """Como read(), y además la muestra absoluta donde empieza lo leído.
+
+        Si parte de lo pedido ya se descartó, lo leído empieza después de `start`: quien arme un
+        clip con eso necesita el inicio real para no desalinear audio, video y horas.
+        """
         import numpy as np
         with self.lock:
             start = max(int(start), self.oldest(), 0)
             end = min(int(end), self.written)
             if end <= start:
-                return np.zeros(0, dtype='float32')
+                return start, np.zeros(0, dtype='float32')
             position = start % self.capacity
             first = min(end - start, self.capacity - position)
-            return np.concatenate([self.buffer[position:position + first],
-                                   self.buffer[:end - start - first]])
+            return start, np.concatenate([self.buffer[position:position + first],
+                                          self.buffer[:end - start - first]])
 
     def clear(self):
         with self.lock:
