@@ -11,6 +11,24 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d db_desaparecidos"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Visor web de la base de datos: http://localhost:8082
+  # Sistema: PostgreSQL · Servidor: postgres_db · Usuario: admin · Base de datos: db_desaparecidos
+  adminer:
+    image: adminer:latest
+    container_name: adminer_desaparecidos
+    restart: always
+    ports:
+      - "8082:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres_db
+    depends_on:
+      - postgres_db
 
 volumes:
   postgres_data:

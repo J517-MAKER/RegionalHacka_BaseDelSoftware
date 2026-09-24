@@ -37,6 +37,11 @@ def start_voice_retention():
 if not app.is_started:  # the interface tests re-execute this module
     app.on_startup(start_voice_retention)
     app.on_shutdown(stop_all)  # release all webcams when the server stops
+    # PostgreSQL: saves cases, photos, cameras and detections; never during the interface tests.
+    if config.DB_SYNC_ENABLED and 'PYTEST_CURRENT_TEST' not in os.environ:
+        from services.db_sync import database  # noqa: E402
+        app.on_startup(database.start)
+        app.on_shutdown(database.stop)
 
 
 @ui.page('/')
@@ -46,7 +51,20 @@ def index():
     ui.navigate.to(home_route())
 
 
+def port_in_use(host, port):
+    """True when another program (usually an earlier NEXO still running) already listens there."""
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.settimeout(.5)
+        return probe.connect_ex((host, port)) == 0
+
+
 if __name__ in {'__main__','__mp_main__'}:
+    # The interface tests also run this module, without opening the port.
+    if __name__ == '__main__' and 'PYTEST_CURRENT_TEST' not in os.environ and port_in_use(HOST, PORT):
+        raise SystemExit(f'El puerto {PORT} ya está en uso: probablemente NEXO sigue abierto en otra terminal.\n'
+                         f'Ciérralo (Ctrl+C en esa terminal) o abre http://{HOST}:{PORT}, '
+                         f'o usa otro puerto: $env:NEXO_PORT="8081"; python main.py')
     ui.run(host=HOST,port=PORT,title='NEXO · Búsqueda y monitoreo',language='es',
            reload=False,show=os.getenv('NEXO_SHOW','1')=='1',
            storage_secret=os.getenv('NEXO_STORAGE_SECRET') or secrets.token_hex(32),

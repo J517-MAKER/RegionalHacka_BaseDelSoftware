@@ -1,6 +1,8 @@
 import psycopg
 from pgvector.psycopg import register_vector
 import os
+import re
+import socket
 
 # Configuración de conexión con PostgreSQL en Docker
 DB_CONFIG = os.getenv(
@@ -8,10 +10,33 @@ DB_CONFIG = os.getenv(
     'dbname=db_desaparecidos user=admin password=mi_password_seguro host=localhost port=5432'
 )
 
+def _host_port():
+    """Host y puerto de DB_CONFIG, tanto en formato 'host=... port=...' como postgresql://."""
+    if '://' in DB_CONFIG:
+        from urllib.parse import urlparse
+        url = urlparse(DB_CONFIG)
+        return url.hostname or 'localhost', url.port or 5432
+    host = re.search(r'host=(\S+)', DB_CONFIG)
+    port = re.search(r'port=(\d+)', DB_CONFIG)
+    return (host[1] if host else 'localhost'), (int(port[1]) if port else 5432)
+
+
+def database_available(timeout=.5):
+    """Prueba rápida del puerto: sin ella psycopg espera mucho cuando el contenedor está apagado."""
+    try:
+        socket.create_connection(_host_port(), timeout=timeout).close()
+        return True
+    except OSError:
+        return False
+
+
 def get_db_connection():
     """Establece la conexión con PostgreSQL y habilita el tipo VECTOR."""
-    conn = psycopg.connect(DB_CONFIG)
-    register_vector(conn)
+    conn = psycopg.connect(DB_CONFIG, connect_timeout=5)
+    try:
+        register_vector(conn)
+    except psycopg.ProgrammingError:
+        pass  # la extensión vector aún no existe: la crea db_bootstrap.initialize_database()
     return conn
 
 def guardar_captura_rostro(codigo_camara: str, embedding: list, ruta_foto: str, tipo_evento: str = 'ALERTA_AUDIO'):

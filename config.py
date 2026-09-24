@@ -41,6 +41,10 @@ DEFAULT_CAMERA_ID = os.getenv('NEXO_CAMERA', 'CAM-008')
 SECOND_CAMERA_ID = os.getenv('NEXO_CAMERA_2', 'CAM-007')
 
 # Importación de alertas de búsqueda: archivos temporales, nunca evidencia.
+# Base de datos PostgreSQL (docker-compose.yml). Opcional: sin contenedor, NEXO trabaja en memoria.
+DB_SYNC_ENABLED = os.getenv('NEXO_DB_SYNC', '1') == '1'
+DB_SYNC_SECONDS = float(os.getenv('NEXO_DB_SYNC_SECONDS', '5'))
+
 IMPORT_DIR = BASE_DIR / 'imports'
 IMPORT_DOCUMENTS_DIR = IMPORT_DIR / 'documents'
 IMPORT_PHOTOS_DIR = IMPORT_DIR / 'photos'
