@@ -32,7 +32,7 @@ def cameras_page(camera_id: str = ''):
                 live_inst = get_live_for_camera(camera.id)
                 with ui.column().classes('p-5 w-full gap-2'):
                     StatusBadge(camera.status)
-                    audio = 'Micrófono del equipo · detección por voz' if camera.id in (config.DEFAULT_CAMERA_ID, config.SECOND_CAMERA_ID) else 'Disponible · simulación' if camera.audio else 'No disponible'
+                    audio = 'Micrófono del equipo · detección por voz' if camera.id in (config.DEFAULT_CAMERA_ID, config.SECOND_CAMERA_ID) else 'Micrófono del celular · no se analiza' if camera.id == config.THIRD_CAMERA_ID else 'Disponible · simulación' if camera.audio else 'No disponible'
                     for label, value in [('Nombre', camera.name), ('Ubicación', camera.location), ('Última comunicación', camera.last_seen), ('Audio', audio)]:
                         InfoPair(label, value)
                     if own and live_inst:
@@ -68,7 +68,7 @@ def cameras_page(camera_id: str = ''):
                 start = 0
                 page.value = 1
             CameraGrid(cameras[start:], count, open_camera)
-            ui.label(f'{min(start+1, len(cameras))}–{min(start+count*count, len(cameras))} de {len(cameras)} cámaras · {config.DEFAULT_CAMERA_ID} y {config.SECOND_CAMERA_ID} son cámaras en vivo del equipo; las demás son capturas sintéticas').classes('text-xs muted mt-3')
+            ui.label(f'{min(start+1, len(cameras))}–{min(start+count*count, len(cameras))} de {len(cameras)} cámaras · {config.DEFAULT_CAMERA_ID}, {config.SECOND_CAMERA_ID} y {config.THIRD_CAMERA_ID} (celular) son cámaras en vivo del equipo; las demás son capturas sintéticas').classes('text-xs muted mt-3')
 
         with ui.element('div').classes('toolbar'):
             search = ui.input('Buscar cámara o ubicación', on_change=lambda: grid.refresh()).props('outlined dense clearable')

@@ -55,6 +55,8 @@ EVIDENCE_POST_SECONDS = 10
 AUDIO_RING_SECONDS = EVIDENCE_PRE_SECONDS + AUDIO_WINDOW_SECONDS + EVIDENCE_POST_SECONDS + 15
 DEFAULT_CAMERA_ID = os.getenv('NEXO_CAMERA', 'CAM-008')
 SECOND_CAMERA_ID = os.getenv('NEXO_CAMERA_2', 'CAM-007')
+# Celular enlazado con Enlace Móvil de Windows (cámara conectada).
+THIRD_CAMERA_ID = os.getenv('NEXO_CAMERA_3', 'CAM-004')
 
 # Importación de alertas de búsqueda: archivos temporales, nunca evidencia.
 # Base de datos PostgreSQL (docker-compose.yml). Opcional: sin contenedor, NEXO trabaja en memoria.
@@ -86,6 +88,7 @@ FACE_LEVEL_HIGH = 0.60
 # Reconocimiento en vivo: la webcam del equipo donde corre NEXO, asociada a una cámara de la red.
 CAMERA_INDEX = int(os.getenv('NEXO_CAMERA_INDEX', '0'))
 CAMERA_INDEX_2 = int(os.getenv('NEXO_CAMERA_INDEX_2', '1'))
+CAMERA_INDEX_3 = int(os.getenv('NEXO_CAMERA_INDEX_3', '2'))
 # Una detección por caso y cámara en cada ventana; dentro de ella se conserva la mejor captura.
 LIVE_DETECTION_COOLDOWN_SECONDS = 30
 LIVE_GALLERY_REFRESH_SECONDS = 2

@@ -5,6 +5,7 @@ from components.match_comparison import MatchComparison
 from components.status_badge import StatusBadge
 from components.states import EmptyState
 from services.facial_service import get_matches,get_detection
+from services.face_engine import display_level
 from services.cases_service import get_cases
 from services.search_matching_service import get_candidates
 
@@ -34,7 +35,7 @@ def matches_page(case_id:str='',match_id:str='',review:str=''):
                         with ui.element('div').classes('review-list-item '+('selected' if item.id==match.id else '')).on('click',select):
                             with ui.row().classes('justify-between w-full mb-2'):
                                 ui.label(d.camera_id).classes('mono')
-                                ui.label(f'{d.similarity} %').classes('text-sm font-medium')
+                                ui.label(display_level(d.similarity)).classes('text-sm font-medium')
                             ui.label(d.case_id).classes('text-xs muted mb-2')
                             ui.label(d.timestamp).classes('text-[10px] muted mb-3')
                             StatusBadge(item.status)

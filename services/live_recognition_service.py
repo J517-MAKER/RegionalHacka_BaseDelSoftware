@@ -31,12 +31,14 @@ def ascii_label(text):
     return unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode()
 
 
-def face_crop_data_url(frame, bbox, margin=.35, height=320):
+def face_crop_data_url(frame, bbox, margin=.35, height=320, mirrored=True):
     """JPEG data URL of a face with some margin, un-mirrored so it reads like a photograph."""
     import cv2
     x1, y1, x2, y2 = bbox
     dx, dy = int((x2 - x1) * margin), int((y2 - y1) * margin)
-    crop = cv2.flip(frame[max(0, y1 - dy):y2 + dy, max(0, x1 - dx):x2 + dx], 1)
+    crop = frame[max(0, y1 - dy):y2 + dy, max(0, x1 - dx):x2 + dx]
+    if mirrored:
+        crop = cv2.flip(crop, 1)
     if crop.shape[0] > height:
         crop = cv2.resize(crop, (max(1, round(crop.shape[1] * height / crop.shape[0])), height))
     data = cv2.imencode('.jpg', crop, [cv2.IMWRITE_JPEG_QUALITY, 88])[1]
@@ -44,11 +46,14 @@ def face_crop_data_url(frame, bbox, margin=.35, height=320):
 
 
 def draw_face(image, face):
-    """Box plus a filled label: folio, name, similarity and level, or «Sin coincidencia»."""
+    """Box plus a filled label: folio, name and level, or «Sin coincidencia».
+
+    Nunca se dibuja el porcentaje crudo junto al nombre: en la pantalla de la cámara se lee
+    como una identificación, y aquí nadie la ha revisado todavía."""
     import cv2
     x1, y1, x2, y2 = face['bbox']
     color = face_engine.LEVEL_COLORS[face['level']]
-    label = (f'{face["case_id"]} {ascii_label(face["name"])} {face["similarity"]:.0%} {face["level"]}'
+    label = (f'{face["case_id"]} {ascii_label(face["name"])} {face["level"]}'
              if face['level'] else 'Sin coincidencia')
     cv2.rectangle(image, (x1, y1), (x2, y2), color, 2)
     # Sized for the compact 480-px view of the page.
@@ -63,14 +68,23 @@ def draw_face(image, face):
 # Physical cameras are told apart by their name, not by a fixed index: Windows renumbers
 # them when a USB webcam is plugged or unplugged, and virtual cameras (OBS, phones) are
 # listed among them.
-VIRTUAL_HINTS = ('virtual', 'obs', 'droidcam', 'iriun', 'manycam', 'xsplit', 'snap camera', 'ndi', 'epoccam')
+# Enlace Móvil de Windows publica el celular como «<teléfono> (Windows Virtual Camera)».
+PHONE_HINTS = ('windows virtual camera', 'droidcam', 'iriun', 'epoccam')
+VIRTUAL_HINTS = ('virtual', 'obs', 'manycam', 'xsplit', 'snap camera', 'ndi')
 BUILTIN_HINTS = ('integrated', 'integrada', 'built-in', 'builtin', 'internal', 'interna', 'facetime')
-KIND_LABELS = {'laptop': 'Cámara de la laptop', 'usb': 'Webcam USB', 'virtual': 'Cámara virtual'}
+KIND_LABELS = {'laptop': 'Cámara de la laptop', 'usb': 'Webcam USB', 'phone': 'Cámara del celular',
+               'virtual': 'Cámara virtual'}
+MISSING_HINTS = {
+    'phone': 'No se detectó la cámara del celular. Enlázalo en Configuración > Bluetooth y dispositivos > '
+             'Dispositivos móviles, activa «Usar como cámara conectada» y pulsa «Detectar cámaras».',
+}
 
 
 def classify_device(name):
     """'laptop', 'usb' or 'virtual' from the name the operating system reports."""
     low = (name or '').lower()
+    if any(hint in low for hint in PHONE_HINTS):
+        return 'phone'
     if any(hint in low for hint in VIRTUAL_HINTS):
         return 'virtual'
     if any(hint in low for hint in BUILTIN_HINTS):
@@ -158,7 +172,12 @@ class LiveRecognition:
 
     def __init__(self, camera_id=None, camera_index=None, name='Cámara 1', kind=None):
         self.name = name
-        self.kind = kind  # 'laptop' or 'usb': which physical camera this slot looks for
+        self.kind = kind  # 'laptop', 'usb' or 'phone': which physical camera this slot looks for
+        # Las webcams se ven en espejo, como espera quien está frente a ellas; el celular apunta
+        # a la escena (cámara trasera) y se muestra tal cual.
+        self.mirror = kind != 'phone'
+        # Quién la detuvo a propósito: el monitoreo continuo no reabre una cámara pausada.
+        self.paused_by = ''
         self.device_name = None
         self.running = False
         self.status = 'DETENIDA'
@@ -194,7 +213,8 @@ class LiveRecognition:
         device = find_device(self.kind, busy, devices)
         if device is None:
             label = KIND_LABELS[self.kind].lower()
-            raise LiveRecognitionError(f'No se detectó la {label}. Conéctala y pulsa «Detectar cámaras».')
+            raise LiveRecognitionError(MISSING_HINTS.get(
+                self.kind, f'No se detectó la {label}. Conéctala y pulsa «Detectar cámaras».'))
         return device['index'], device['name']
 
     def start(self, camera_id=None, camera_index=None, actor='Sistema'):
@@ -231,7 +251,7 @@ class LiveRecognition:
         for other in self._others():
             with other._lock:
                 seen = other._frame
-            if seen is not None and _same_picture(cv2.flip(first, 1), seen):
+            if seen is not None and _same_picture(cv2.flip(first, 1) if self.mirror else first, seen):
                 capture.release()
                 raise LiveRecognitionError(f'El dispositivo {index} muestra la misma imagen que {other.name}; '
                                            'es la misma cámara física. Elige otro dispositivo.')
@@ -289,7 +309,7 @@ class LiveRecognition:
                 self.error, self.status = None, 'RECONOCIENDO'
             failures = 0
             with self._lock:
-                self._frame = cv2.flip(frame, 1)  # mirror view
+                self._frame = cv2.flip(frame, 1) if self.mirror else frame
 
     def _analysis_loop(self):
         while not self._stop.is_set():
@@ -350,10 +370,10 @@ class LiveRecognition:
             detection = last[1]
             if percent > detection.similarity and detection.status == 'Pendiente de validación':
                 detection.similarity, detection.quality = percent, quality
-                detection.capture = face_crop_data_url(frame, face['bbox'])
+                detection.capture = face_crop_data_url(frame, face['bbox'], mirrored=self.mirror)
             return
         detection = Detection(next_id(store.detections, 'DET'), face['case_id'], self.camera_id, store.now(),
-                              percent, quality=quality, capture=face_crop_data_url(frame, face['bbox']))
+                              percent, quality=quality, capture=face_crop_data_url(frame, face['bbox'], mirrored=self.mirror))
         match = Match(next_id(store.matches, 'MAT'), detection.id)
         store.detections.insert(0, detection)
         store.matches.insert(0, match)
@@ -388,7 +408,7 @@ class LiveRecognition:
             raise LiveRecognitionError('Inicia la cámara para tomar la fotografía.')
         if not faces:
             raise LiveRecognitionError('No hay un rostro en cuadro. Colócate de frente a la cámara.')
-        return face_crop_data_url(frame, faces[0]['bbox'], margin=.6, height=480)
+        return face_crop_data_url(frame, faces[0]['bbox'], margin=.6, height=480, mirrored=self.mirror)
 
     def gallery_counts(self):
         """Usable reference photos per case, as seen by the running session."""
@@ -411,7 +431,7 @@ class LiveRecognition:
             frame, faces = self._frame, list(self.faces)
         if frame is None:
             return []
-        return [{'capture': face_crop_data_url(frame, face['bbox']), 'case_id': face['case_id'],
+        return [{'capture': face_crop_data_url(frame, face['bbox'], mirrored=self.mirror), 'case_id': face['case_id'],
                  'name': face['name'], 'level': face['level'],
                  'similarity': round(face['similarity'] * 100) if face['level'] else None}
                 for face in faces]
@@ -433,7 +453,10 @@ live_2 = LiveRecognition(config.SECOND_CAMERA_ID, config.CAMERA_INDEX_2, name='C
 # Default alias for backwards compatibility
 live = live_1
 
-LIVE_INSTANCES = [live_1, live_2]
+# Tercera ranura: el celular enlazado con Enlace Móvil de Windows.
+live_3 = LiveRecognition(config.THIRD_CAMERA_ID, config.CAMERA_INDEX_3, name='Cámara 3 · Celular', kind='phone')
+
+LIVE_INSTANCES = [live_1, live_2, live_3]
 
 
 def get_live_for_camera(camera_id):

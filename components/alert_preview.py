@@ -74,8 +74,7 @@ def MatchBlocks(record, on_link=None):
     if record.face_reference_status == 'COINCIDENCIAS_FACIALES':
         for match in record.face_matches:
             with ui.row().classes('items-center gap-3 w-full'):
-                MatchLevel(match['level'], f'{match["case_id"]} — {match["label"]}',
-                           f'{match["name"]} · similitud {match["percent"]} %')
+                MatchLevel(match['level'], f'{match["case_id"]} — {match["label"]}', match['name'])
                 if on_link:
                     ui.button('Vincular', on_click=lambda case_id=match['case_id']: on_link(case_id)) \
                         .props('flat dense no-caps')

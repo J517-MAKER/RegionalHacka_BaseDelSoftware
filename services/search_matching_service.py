@@ -103,7 +103,7 @@ def _face_signal(profile, embedding):
         return MatchSignal('NO_EVALUABLE', 'Sin huella facial comparable en la ficha o en la detección.')
     value = face_engine.similarity(profile.face_embedding, embedding)
     level = face_engine.level_of(value) or 'BAJA'
-    return MatchSignal(level, f'Similitud facial orientativa de {value:.2f} sobre el modelo de referencia.',
+    return MatchSignal(level, 'Similitud facial orientativa frente al modelo de referencia.',
                        round(float(value), 3))
 
 
@@ -114,7 +114,8 @@ def _face_signal_from_similarity(percent):
     value = percent / 100
     level = 'ALTA' if value >= config.FACE_LEVEL_HIGH else 'MEDIA' if value >= config.FACE_LEVEL_MEDIUM \
         else 'BAJA' if value >= config.FACE_MATCH_THRESHOLD else 'BAJA'
-    return MatchSignal(level, f'Similitud registrada por el módulo facial: {percent} %.', round(value, 3))
+    return MatchSignal(level, 'Similitud registrada por el módulo facial sobre una detección previa.',
+                       round(value, 3))
 
 
 def _temporal_signal(profile, moment):

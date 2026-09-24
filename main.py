@@ -58,10 +58,28 @@ def stop_database_sync():
     database.stop()
 
 
+def start_continuous_monitoring():
+    """Enciende la cámara del equipo y el micrófono sin que nadie tenga que pulsar
+    INICIAR/REANUDAR: así el llamado de auxilio detectado por voz queda vinculado a la
+    cámara en vivo desde que arranca el servidor (services/camera_monitor_service.py crea el
+    fragmento de video alrededor de cada evento). Se desactiva con NEXO_CAMERA_AUTOSTART=false
+    y nunca corre bajo las pruebas."""
+    from services.camera_monitor_service import monitor
+    monitor.start()
+
+
+def stop_continuous_monitoring():
+    from services.camera_monitor_service import monitor
+    monitor.stop()
+    monitor.audio_session().stop()
+
+
 if not app.is_started:  # the interface tests re-execute this module
     app.on_startup(start_voice_retention)
     app.on_startup(start_database_sync)
+    app.on_startup(start_continuous_monitoring)
     app.on_shutdown(stop_live_cameras)  # libera las dos cámaras al detener el servidor
+    app.on_shutdown(stop_continuous_monitoring)
     app.on_shutdown(stop_database_sync)
 
 

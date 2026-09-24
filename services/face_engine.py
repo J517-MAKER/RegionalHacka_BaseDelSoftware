@@ -153,7 +153,7 @@ def similarity(first, second):
 
 
 def level_of(value):
-    """ALTA, MEDIA or BAJA from the proposal threshold up; None below it."""
+    """ALTA, MEDIA o BAJA desde el umbral de propuesta hacia arriba; None debajo."""
     if value >= config.FACE_LEVEL_HIGH:
         return 'ALTA'
     if value >= config.FACE_LEVEL_MEDIUM:
@@ -161,6 +161,17 @@ def level_of(value):
     if value >= config.FACE_MATCH_THRESHOLD:
         return 'BAJA'
     return None
+
+
+def display_level(percent):
+    """Para pantalla: convierte un porcentaje guardado (0-100) en ALTA/MEDIA/BAJA.
+
+    La interfaz nunca debe mostrar el porcentaje crudo junto a un nombre o caso antes de
+    que una persona lo revise: un «72 %» se lee como una identificación, aunque no lo sea.
+    """
+    if percent is None:
+        return 'SIN NIVEL'
+    return level_of(percent / 100) or 'SIN NIVEL'
 
 
 # ------------------------------------------------------------------ command line

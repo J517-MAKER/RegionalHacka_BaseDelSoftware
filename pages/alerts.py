@@ -7,6 +7,7 @@ from components.status_badge import StatusBadge
 from services.alerts_service import start_alert_tracking
 from services.cameras_service import get_camera, get_nearby_cameras
 from services.event_frames_service import get_event_candidates, get_event_frames
+from services.face_engine import display_level
 from services.evidence_service import (get_evidence, get_event, register_playback,
                                        request_deletion, review_event, verify_integrity)
 from services import store
@@ -98,7 +99,7 @@ def alerts_page(status:str=''):
                                 with ui.column().classes('gap-1 items-center'):
                                     ui.image(face['capture']).classes('w-20 h-24').props('fit=cover')
                                     if face['case_id']:
-                                        ui.link(f'{face["case_id"]} · {face["similarity"]} %',
+                                        ui.link(f'{face["case_id"]} · {display_level(face["similarity"])}',
                                                 f'/cases/{face["case_id"]}').classes('text-[10px]')
                                     else:
                                         ui.label('Sin coincidencia').classes('text-[10px] muted')

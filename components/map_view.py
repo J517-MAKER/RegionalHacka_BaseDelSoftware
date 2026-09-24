@@ -18,18 +18,52 @@ ui.add_head_html("""
 <link href='https://api.mapbox.com/mapbox-gl-js/v3.31.0/mapbox-gl.css' rel='stylesheet' crossorigin='anonymous' />
 <style>
   /* ── User location marker: teal pulsing dot ── */
-  .mapbox-marker-user {
-    width: 18px; height: 18px;
-    background: radial-gradient(circle, #32788A 0%, #285f6e 100%);
-    border: 3px solid rgba(255,255,255,0.9);
-    border-radius: 50%;
-    box-shadow: 0 0 12px rgba(50,120,138,0.7), 0 0 30px rgba(50,120,138,0.3);
-    animation: user-pulse 2s ease-in-out infinite;
+  /* ── Tu ubicación: punto azul parpadeante con onda expansiva ──
+     Mapbox coloca cada marcador con `transform` en su elemento raíz. Si la animación
+     también usara transform en la raíz, lo sobrescribiría y el punto saltaría a una
+     esquina: por eso sólo se animan los hijos. */
+  .mapbox-marker-user { width: 24px; height: 24px; cursor: pointer; z-index: 20; }
+  .mapbox-marker-user .user-ring,
+  .mapbox-marker-user .user-core { position: absolute; border-radius: 50%; pointer-events: none; }
+  .mapbox-marker-user .user-ring {
+    inset: 0;
+    background: rgba(0,136,255,0.45);
+    animation: user-ring 1.6s ease-out infinite;
   }
-  @keyframes user-pulse {
-    0%, 100% { box-shadow: 0 0 12px rgba(50,120,138,0.7), 0 0 30px rgba(50,120,138,0.3); transform: scale(1); }
-    50%      { box-shadow: 0 0 20px rgba(50,120,138,0.9), 0 0 50px rgba(50,120,138,0.5); transform: scale(1.15); }
+  .mapbox-marker-user .user-core {
+    left: 5px; top: 5px; width: 14px; height: 14px;
+    background: #0088FF;
+    border: 2.5px solid #ffffff;
+    box-sizing: border-box;
+    box-shadow: 0 0 8px rgba(0,136,255,0.9);
+    animation: user-blink 1s ease-in-out infinite;
   }
+  @keyframes user-ring {
+    0%   { transform: scale(0.5); opacity: 0.9; }
+    100% { transform: scale(2.8); opacity: 0; }
+  }
+  @keyframes user-blink {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.25; }
+  }
+
+  /* ── Aviso de ubicación sobre el mapa ── */
+  .map-locate {
+    position: absolute; top: 10px; left: 10px; z-index: 1000;
+    display: flex; align-items: center; gap: 6px;
+    background: rgba(255,255,255,0.94);
+    border: 1px solid rgba(50,120,138,0.3);
+    border-radius: 8px;
+    padding: 5px 10px;
+    font-size: 11px; font-weight: 500; color: #334155;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    cursor: default; user-select: none;
+  }
+  .map-locate.ready { cursor: pointer; }
+  .map-locate.ready:hover { border-color: #0088FF; }
+  .map-locate .locate-dot { width: 8px; height: 8px; border-radius: 50%; background: #94a3b8; }
+  .map-locate.ready .locate-dot { background: #0088FF; animation: user-blink 1s ease-in-out infinite; }
+  .map-locate.denied .locate-dot { background: #ef4444; }
 
   /* ── Camera markers: glowing circles ── */
   .mapbox-marker-camera {
@@ -37,12 +71,13 @@ ui.add_head_html("""
     border: 2.5px solid rgba(255,255,255,0.85);
     border-radius: 50%;
     box-shadow: 0 0 8px rgba(0,0,0,0.15), 0 0 16px var(--marker-glow, rgba(50,120,138,0.4));
-    transition: all 0.3s cubic-bezier(0.4,0,0.2,1);
+    /* Nunca `transition: all` ni `transform` aquí: Mapbox mueve el marcador con transform y
+       el marcador se quedaría atrás al desplazar el mapa. */
+    transition: box-shadow 0.2s ease, width 0.2s ease, height 0.2s ease;
     cursor: pointer;
   }
   .mapbox-marker-camera:hover {
-    transform: scale(1.3);
-    box-shadow: 0 0 14px rgba(0,0,0,0.2), 0 0 28px var(--marker-glow, rgba(50,120,138,0.6));
+    box-shadow: 0 0 0 4px rgba(255,255,255,0.9), 0 0 28px var(--marker-glow, rgba(50,120,138,0.6));
   }
   .mapbox-marker-camera.selected {
     width: 30px; height: 30px;
@@ -189,7 +224,9 @@ ui.add_body_html("""
   var TEAL = 'rgb(50,120,138)';
   // Vista mundial de fronteras (la que usan los ejemplos de Mapbox).
   var WORLDVIEW = ['any', ['==', 'all', ['get', 'worldview']], ['in', 'US', ['get', 'worldview']]];
-  var views = {}, maps = new Set(), position = null, asked = false;
+  var views = {}, maps = new Set(), position = null, watching = false;
+  // 'locating' · 'ready' · 'denied' · 'unavailable'
+  var locateState = navigator.geolocation ? 'locating' : 'unavailable', locateError = '';
 
   // Respaldo sin token: teselas claras de CARTO (sin máscara de fronteras).
   var CARTO_LIGHT = {
@@ -212,6 +249,12 @@ ui.add_body_html("""
         if (/^admin-0-boundary/.test(id)) map.setLayoutProperty(id, 'visibility', 'none');  // la sustituye el contorno de México
         if (layer.type === 'symbol' && layer.layout && layer.layout['text-field'])
           map.setLayoutProperty(id, 'text-field', ['coalesce', ['get', 'name_es'], ['get', 'name']]);
+        // Las etiquetas se dibujan encima de todo, también de la máscara blanca: los nombres de
+        // lugares y calles de otros países se filtran aquí (el Golfo y el Pacífico se conservan).
+        if (layer.type === 'symbol' && (layer['source-layer'] === 'place_label' || layer['source-layer'] === 'road')) {
+          var onlyMexico = ['==', ['get', 'iso_3166_1'], 'MX'];
+          map.setFilter(id, layer.filter ? ['all', layer.filter, onlyMexico] : onlyMexico);
+        }
       } catch (e) { /* capa sin esa propiedad */ }
     });
   }
@@ -232,14 +275,71 @@ ui.add_body_html("""
       paint: { 'line-color': TEAL, 'line-width': ['interpolate', ['linear'], ['zoom'], 3, 1.6, 8, 3] } });
   }
 
-  function userMarker(map) {
-    if (!position) return;
-    var dot = document.createElement('div');
-    dot.className = 'mapbox-marker-user';
-    new mapboxgl.Marker(dot).setLngLat([position.lng, position.lat])
-      .setPopup(new mapboxgl.Popup({ offset: 15 }).setHTML(
-        '<b>📍 Tu ubicación actual</b><br><span style="color:#64748B">Precisión: ' + position.accuracy + ' m</span>'))
-      .addTo(map);
+  function popupHtml() {
+    return '<b>📍 Tu ubicación actual</b><br><span style="color:#64748B">Precisión: ±' +
+           position.accuracy + ' m</span>';
+  }
+
+  // Un solo marcador por mapa; cada nueva lectura sólo lo mueve.
+  function userMarker(el) {
+    if (!position || !el._nexoMap) return;
+    if (!el._nexoUser) {
+      var dot = document.createElement('div');
+      dot.className = 'mapbox-marker-user';
+      dot.innerHTML = '<span class="user-ring"></span><span class="user-core"></span>';
+      el._nexoUser = new mapboxgl.Marker({ element: dot, anchor: 'center' })
+        .setLngLat([position.lng, position.lat])
+        .setPopup(new mapboxgl.Popup({ offset: 16 }).setHTML(popupHtml()))
+        .addTo(el._nexoMap);
+    } else {
+      el._nexoUser.setLngLat([position.lng, position.lat]);
+      el._nexoUser.getPopup().setHTML(popupHtml());
+    }
+  }
+
+  function locateChip(el) {
+    var host = el.parentElement;
+    if (!host) return;
+    var chip = host.querySelector(':scope > .map-locate');
+    if (!chip) {
+      chip = document.createElement('div');
+      chip.className = 'map-locate';
+      chip.innerHTML = '<span class="locate-dot"></span><span class="locate-text"></span>';
+      chip.addEventListener('click', function () {
+        if (position && el._nexoMap) el._nexoMap.flyTo({ center: [position.lng, position.lat], zoom: 12 });
+      });
+      host.appendChild(chip);
+    }
+    var text = {
+      locating: 'Obteniendo tu ubicación…',
+      ready: position ? 'Tu ubicación · ±' + (position ? position.accuracy : 0) + ' m · centrar' : '',
+      denied: 'Ubicación bloqueada: permítela en el candado de la barra de direcciones',
+      unavailable: 'Ubicación no disponible' + (locateError ? ': ' + locateError : '')
+    }[locateState];
+    chip.className = 'map-locate ' + locateState;
+    chip.title = locateState === 'ready' ? 'Centrar el mapa en tu ubicación' : '';
+    chip.querySelector('.locate-text').textContent = text;
+  }
+
+  function refreshLocation() {
+    maps.forEach(function (el) { userMarker(el); locateChip(el); });
+  }
+
+  // Seguimiento continuo: la primera lectura llega rápido (red/Wi-Fi) y luego se afina.
+  function startWatching() {
+    if (watching || !navigator.geolocation) return;
+    watching = true;
+    navigator.geolocation.watchPosition(function (pos) {
+      position = { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: Math.round(pos.coords.accuracy) };
+      locateState = 'ready';
+      refreshLocation();
+    }, function (err) {
+      if (position) return;  // conservar la última lectura buena
+      locateState = err.code === 1 ? 'denied' : 'unavailable';
+      locateError = err.code === 3 ? 'tiempo agotado' : (err.code === 2 ? 'sin señal de posición' : '');
+      console.warn('Geolocalización:', err.message);
+      refreshLocation();
+    }, { enableHighAccuracy: false, maximumAge: 30000, timeout: 20000 });
   }
 
   function drawMarkers(el) {
@@ -301,20 +401,14 @@ ui.add_body_html("""
     }
 
     drawMarkers(el);
-    userMarker(map);
-    if (!asked && navigator.geolocation) {
-      asked = true;
-      navigator.geolocation.getCurrentPosition(function (pos) {
-        position = { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: Math.round(pos.coords.accuracy) };
-        maps.forEach(function (other) { if (other._nexoMap) userMarker(other._nexoMap); });
-      }, function (err) { console.warn('Geolocalización no disponible:', err.message); },
-      { enableHighAccuracy: true, timeout: 10000 });
-    }
+    userMarker(el);
+    locateChip(el);
+    startWatching();
   }
 
   function sweep() {
     maps.forEach(function (el) {
-      if (!el.isConnected) { el._nexoMap.remove(); el._nexoMap = null; maps.delete(el); }
+      if (!el.isConnected) { el._nexoMap.remove(); el._nexoMap = null; el._nexoUser = null; maps.delete(el); }
     });
     document.querySelectorAll('.nexo-map').forEach(init);
   }

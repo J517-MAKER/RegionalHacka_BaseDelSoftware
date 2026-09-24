@@ -63,7 +63,6 @@ def CandidateReview(candidate, on_change=None, supervising=False):
         InfoPair('Cámara', candidate.camera_id)
         InfoPair('Fecha y hora de la detección', candidate.timestamp)
         InfoPair('Ubicación', candidate.location or '—')
-        InfoPair('Prioridad de revisión', f'{candidate.relevance_score:.2f} · orden de la cola')
 
     SignalGrid(candidate)
     ui.label('IDENTIDAD NO CONFIRMADA. El sistema propone a quién revisar; no afirma quién es. '
