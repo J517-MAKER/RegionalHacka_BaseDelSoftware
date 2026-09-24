@@ -1,0 +1,37 @@
+from nicegui import ui
+from components.layout import notify_action
+from components.person_profile import InfoPair
+from components.status_badge import StatusBadge
+from services.cases_service import get_case
+from services.cameras_service import get_camera
+from services.facial_service import get_detection,validate_match,reject_match,request_review
+from services.users_service import can
+
+
+def MatchComparison(match,on_change=None):
+    d=get_detection(match.detection_id)
+    case=get_case(d.case_id)
+    camera=get_camera(d.camera_id)
+    with ui.row().classes('items-center justify-between w-full mb-3'):
+        with ui.column().classes('gap-1'):
+            ui.label(case.person.name).classes('text-lg font-medium')
+            ui.label(f'{match.id} / {case.id}').classes('mono muted')
+        StatusBadge(match.status)
+    with ui.element('div').classes('comparison-images w-full'):
+        for label,source in [('Fotografía de referencia · demo',case.person.photos[0] if case.person.photos else '/assets/demo/person-1.svg'),('Captura de cámara · demo',d.capture)]:
+            with ui.column().classes('gap-0'):
+                ui.label(label).classes('comparison-label')
+                ui.image(source).props('fit=contain')
+    with ui.element('div').classes('field-grid my-3'):
+        for label,value in [('Cámara / ubicación',f'{camera.id} · {camera.name}'),('Fecha y hora',d.timestamp),
+                             ('Nivel de similitud',f'{d.similarity} %'),('Calidad de imagen',d.quality)]:
+            InfoPair(label,value)
+    ui.label('El nivel de similitud es una referencia del sistema y no constituye una identificación definitiva.').classes('notice')
+    with ui.row().classes('gap-2 mt-4 flex-wrap'):
+        for label,action,success in [('Validar como posible coincidencia',validate_match,'Posible coincidencia validada por operador.'),
+                                     ('Descartar',reject_match,'Coincidencia descartada.'),('Solicitar revisión',request_review,'Evento enviado a revisión.')]:
+            button=ui.button(label,on_click=lambda a=action,s=success:notify_action(lambda:a(match.id),s,on_change)).props('no-caps '+('outline' if action!=validate_match else 'unelevated'))
+            button.set_enabled(can('review'))
+        ui.button('Ver trayectoria',on_click=lambda:ui.navigate.to(f'/tracking?case_id={case.id}')).props('flat no-caps')
+    if match.reviewed_by:
+        ui.label(f'Revisión registrada: {match.reviewed_by} · {match.reviewed_at}').classes('text-xs muted mt-3')

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540"><rect width="960" height="540" fill="#9daaad"/>
+        <path d="M0 210L960 170V540H0" fill="#b5b9b3"/>
+        <path d="M0 0H960V115L0 265Z" fill="#7c8b91"/>
+        <path d="M0 46L570 102V215L0 329Z" fill="#b7bbb6"/>
+        <path d="M0 75L570 126V145L0 102ZM0 187L570 166V185L0 219Z" fill="#63767f"/>
+        <path d="M74 78V289M181 88V269M295 99V247M411 111V224M523 120V207" stroke="#d8dad1" stroke-width="14"/>
+        <path d="M660 0H960V267L660 199Z" fill="#c7cac0"/>
+        <path d="M696 42V204M774 39V221M860 36V242M941 30V260" stroke="#647981" stroke-width="37"/>
+        <path d="M0 540L557 215M234 540L602 215M630 540L675 215M960 500L719 214" stroke="#8b9899" stroke-width="2"/>
+        <path d="M0 455H960M0 358H960M0 287H960" stroke="#909c9c" stroke-width="2"/>
+        <path d="M0 535L540 225" stroke="#d9dcd2" stroke-width="26"/>
+        <rect x="734" y="263" width="125" height="11" fill="#566963"/><path d="M747 274V301M846 274V301" stroke="#51655f" stroke-width="5"/>
+        <rect x="416" y="151" width="3" height="130" fill="#4a6167"/><rect x="391" y="148" width="54" height="9" fill="#e0e4d5"/>
+        <ellipse cx="172" cy="323" rx="43" ry="10" fill="#697d74"/><rect x="169" y="230" width="9" height="94" fill="#6a7667"/>
+        <circle cx="171" cy="218" r="42" fill="#778c79"/><circle cx="156" cy="197" r="31" fill="#819382"/>
+        <g transform="translate(585,305) scale(.85)"><ellipse cx="0" cy="67" rx="24" ry="7" fill="#788b8c"/><circle cy="-23" r="10" fill="#c1ac98"/><path d="M-10-10H11L19 28H-17Z" fill="#3b5867"/><path d="M-7 27L-11 65M8 27L14 65" stroke="#374951" stroke-width="9"/></g>
+        <g transform="translate(652,244) scale(.55)"><circle cy="-23" r="10" fill="#bfae9e"/><path d="M-10-10H11L19 28H-17Z" fill="#8f8575"/><path d="M-7 27L-11 65M8 27L14 65" stroke="#505858" stroke-width="9"/></g>
+        <text x="22" y="515" fill="#edf0e9" font-family="monospace" font-size="13" letter-spacing="2">ESCENA SINTÉTICA · SIN TRANSMISIÓN REAL</text></svg>
