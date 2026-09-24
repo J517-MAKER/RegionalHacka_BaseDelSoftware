@@ -1,10 +1,15 @@
 import os
+import logging
 import secrets
 import asyncio
 from nicegui import background_tasks
 from nicegui import app,ui
 import config
 from config import BASE_DIR,HOST,PORT
+
+# Sin esto, los avisos de conexión de services/db_sync.py (nivel INFO) quedan
+# ocultos: Python no los muestra en consola a menos que se pida explícitamente.
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
 from assets.build_demo import build_assets
 from services.evidence_service import ensure_directories
 from services.event_frames_service import ensure_directories as ensure_frame_directories
