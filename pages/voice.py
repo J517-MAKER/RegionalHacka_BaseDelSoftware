@@ -1,5 +1,5 @@
 from nicegui import ui
-from components.layout import PageLayout, Panel
+from components.layout import PageLayout,Panel,guard_page
 from components.voice_console import MonitoringConsole
 from services.voice_service import get_voice_events
 
@@ -11,6 +11,8 @@ STATE_LABELS = {'SIN_ALERTA': 'SIN_EVENTO', 'REQUIERE_MAS_CONTEXTO': 'SIN_EVENTO
 
 @ui.page('/voice')
 def voice_page():
+    if not guard_page('/voice', 'voice.monitor'):
+        return
     with PageLayout('/voice', 'Detección de auxilio por voz',
                     'El sistema escucha audio real. La detección no confirma la existencia de un delito.'):
         @ui.refreshable

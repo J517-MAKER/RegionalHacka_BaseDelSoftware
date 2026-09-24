@@ -4,7 +4,7 @@ from fastapi import Response
 from nicegui import app, run, ui
 import config
 from components.case_form import NewCaseDialog
-from components.layout import PageLayout, Panel
+from components.layout import PageLayout, Panel, guard_page
 from components.states import EmptyState
 from components.status_badge import StatusBadge
 from services.cameras_service import get_cameras
@@ -31,6 +31,8 @@ def clean(name):
 
 @ui.page('/live')
 def live_page():
+    if not guard_page('/live', 'live.view'):
+        return
     with PageLayout('/live', 'Reconocimiento facial en vivo',
                     'La cámara de este equipo compara cada rostro con las personas en búsqueda. '
                     'Toda coincidencia requiere revisión humana.'):
@@ -81,7 +83,7 @@ def live_page():
             state['busy'] = True
             refresh()
             try:
-                actor = require('track')
+                actor = require('live.control')
                 await run.io_bound(live.start, camera.value, device.value, actor)
                 ui.notify('Reconocimiento iniciado. Los cuadros no se guardan.', type='positive',
                           position='bottom-right')
@@ -96,7 +98,7 @@ def live_page():
                 return
             state['busy'] = True
             try:
-                actor = require('track')
+                actor = require('live.control')
                 await run.io_bound(live.stop, actor)
                 ui.notify('Reconocimiento detenido. La cámara quedó libre.', type='info', position='bottom-right')
             except PermissionError as error:
@@ -107,7 +109,7 @@ def live_page():
 
         def register():
             try:
-                require('case')
+                require('cases.manage')
                 photo = live.capture_face_photo()
             except (LiveRecognitionError, PermissionError) as error:
                 ui.notify(str(error), type='warning', position='bottom-right')
@@ -160,7 +162,7 @@ def live_page():
                     with ui.column().classes('p-4 gap-2 w-full'):
                         ui.button('Registrar persona con fotografía', icon='upload',
                                   on_click=lambda: NewCaseDialog(on_created=gallery.refresh, navigate=False)) \
-                            .props('outline no-caps').set_enabled(can('case'))
+                            .props('outline no-caps').set_enabled(can('cases.manage'))
                         ui.label('Sólo cuentan fotografías reales con un rostro visible; las ilustraciones de '
                                  'demostración no se comparan.').classes('text-[10px] muted')
                 with Panel('Detecciones recientes', 'PENDIENTES DE VALIDACIÓN'):
@@ -178,9 +180,9 @@ def live_page():
             video.set_visibility(running)
             idle.set_visibility(not running)
             hint.set_visibility(running and live.dark)
-            start_button.set_enabled(not running and not state['busy'] and can('track'))
-            stop_button.set_enabled(running and not state['busy'] and can('track'))
-            register_button.set_enabled(running and can('case'))
+            start_button.set_enabled(not running and not state['busy'] and can('live.control'))
+            stop_button.set_enabled(running and not state['busy'] and can('live.control'))
+            register_button.set_enabled(running and can('cases.manage'))
             camera.set_enabled(not running)
             device.set_enabled(not running)
             if live.error and live.error != state['error']:

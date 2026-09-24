@@ -113,7 +113,7 @@ def verify_integrity(event):
 
 
 def register_playback(event_id):
-    actor = require('review')
+    actor = require('evidence.play')
     event = require_event(event_id)
     store.audit(actor, 'Evidencia', f'{actor} reprodujo evidencia {event.event_id}.',
                 camera_id=event.camera_id, result='Consulta')
@@ -138,7 +138,7 @@ def _sync_alert(event):
 
 def review_event(event_id, status, notes=''):
     """Changes only the review state. The stored audio is never modified."""
-    actor = require('review')
+    actor = require('alerts.review')
     event = require_event(event_id)
     if status not in REVIEW_ACTIONS:
         raise ValueError('Estado de revisión no válido.')

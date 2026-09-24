@@ -1,7 +1,7 @@
 from datetime import datetime
 # pyrefly: ignore [missing-import]
 from nicegui import ui
-from components.layout import PageLayout,Panel
+from components.layout import PageLayout,Panel,guard_page
 from components.map_view import MapView
 from components.timeline import Timeline
 from components.person_profile import InfoPair
@@ -15,6 +15,8 @@ from services.cameras_service import get_camera,get_nearby_cameras
 
 @ui.page('/tracking')
 def tracking_page(case_id:str='BUS-2026-0184',alert_id:str='',camera_id:str=''):
+    if not guard_page('/tracking', 'tracking.view'):
+        return
     alert = get_alert(alert_id) if alert_id else None
     
     with PageLayout('/tracking','Mapa y seguimiento','Puntos de detección y relaciones cronológicas. Las conexiones no representan una trayectoria física.'):

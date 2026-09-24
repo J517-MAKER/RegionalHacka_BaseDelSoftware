@@ -41,7 +41,7 @@ def save_upload(content, content_type='', filename='', actor=None):
     From a worker thread (run.io_bound) pass the actor: the session is only readable in the UI context.
     """
     if actor is None:
-        require('case')
+        require('cases.import')
     if not content:
         raise ValueError('El archivo está vacío.')
     if len(content) > config.IMPORT_MAX_BYTES:
@@ -274,7 +274,7 @@ def strip_accents(text):
 # ------------------------------------------------------------------- extraction
 def analyze_alert(record_id, path, kind, actor=None):
     """Full reading pass. A failure in any stage degrades to manual completion."""
-    actor = actor or require('case')
+    actor = actor or require('cases.import')
     record = AlertImportRecord(id=record_id, source_file=project_path(path), source_type=kind,
                                imported_at=store.now(), imported_by=actor)
     embedded, notes = (), []
@@ -334,7 +334,7 @@ def get_import(record_id):
 
 def update_fields(record_id, values):
     """The operator corrects what the reading got wrong; corrections are audited."""
-    actor = require('case')
+    actor = require('cases.import')
     record = get_import(record_id)
     changed = []
     for key, value in values.items():
@@ -523,7 +523,7 @@ def context_matches(record):
 
 def run_matching(record_id, actor=None):
     """Runs the three comparisons. Every result stays pending human validation."""
-    actor = actor or require('case')
+    actor = actor or require('cases.import')
     record = get_import(record_id)
     record.text_matches = text_matches(record)
     record.text_match_status = 'COINCIDENCIAS_ENCONTRADAS' if record.text_matches else 'SIN_COINCIDENCIAS'
@@ -544,7 +544,7 @@ def run_matching(record_id, actor=None):
 # ------------------------------------------------------------------ final actions
 def create_case_from_alert(record_id):
     from services.cases_service import create_case, photo_data_url
-    actor = require('case')
+    actor = require('cases.import')
     record = get_import(record_id)
     if record.linked_case_id:
         raise ValueError('Esta alerta ya está vinculada a un caso.')
@@ -563,7 +563,7 @@ def create_case_from_alert(record_id):
 
 def link_to_case(record_id, case_id):
     from services.cases_service import get_case
-    actor = require('case')
+    actor = require('cases.import')
     record = get_import(record_id)
     case = get_case(case_id)
     if not case:
@@ -575,7 +575,7 @@ def link_to_case(record_id, case_id):
 
 
 def send_to_review(record_id, notes=''):
-    actor = require('case')
+    actor = require('cases.import')
     record = get_import(record_id)
     record.review_status, record.review_notes = 'EN_REVISION', (notes or '')[:500]
     store.audit(actor, 'Importación', f'{record.id}: enviada a revisión', result='EN_REVISION')
@@ -584,7 +584,7 @@ def send_to_review(record_id, notes=''):
 
 def cancel_import(record_id):
     """Cancelling deletes the temporary files: an unused poster is not kept."""
-    actor = require('case')
+    actor = require('cases.import')
     record = get_import(record_id)
     if record.linked_case_id:
         raise ValueError('No se puede cancelar una alerta ya vinculada a un caso.')

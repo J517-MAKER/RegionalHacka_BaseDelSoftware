@@ -204,7 +204,7 @@ def handle_command(text, actor=None):
     actor is supplied by the console, which authorises the administrator inside the
     request context before handing the slow work to a worker thread.
     """
-    actor = actor or require('assistant')
+    actor = actor or require('assistant.use')
     text = (text or '').strip()
     if not text:
         raise ValueError('No se detectó voz en el comando.')

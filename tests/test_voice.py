@@ -32,21 +32,15 @@ class VoiceTest(unittest.TestCase):
                 self.assertEqual(result['intencion'], 'SOLICITUD_AUXILIO')
                 self.assertEqual(result['subtipo'], subtype)
 
-    def test_commands(self):
-        commands = [('iniciar búsqueda del folio 527', 'INICIAR_BUSQUEDA', '527'),
-                    ('detener búsqueda del folio 184', 'DETENER_BUSQUEDA', '184'),
-                    ('mostrar última detección del folio 184', 'MOSTRAR_ULTIMA_DETECCION', '184'),
-                    ('mostrar coincidencias del folio 184', 'MOSTRAR_COINCIDENCIAS', '184'),
-                    ('mostrar cámaras cercanas', 'MOSTRAR_CAMARAS_CERCANAS', None),
-                    ('continuar seguimiento del folio 184', 'INICIAR_SEGUIMIENTO', '184'),
-                    ('detener seguimiento del folio 184', 'DETENER_SEGUIMIENTO', '184'),
-                    ('marcar coincidencia como incorrecta', 'DESCARTAR_COINCIDENCIA', None)]
-        for text, action, folio in commands:
+    def test_authority_commands_are_not_handled_here(self):
+        """Administrative orders belong to the assistant; /voice only detects distress."""
+        for text in ['iniciar búsqueda del folio 527', 'mostrar coincidencias del folio 184',
+                     'mostrar cámaras cercanas', 'marcar coincidencia como incorrecta']:
             with self.subTest(text=text):
-                result = classify_intent(text)
-                self.assertEqual(result['intencion'], 'COMANDO_AUTORIDAD')
-                self.assertEqual(result['accion'], action)
-                self.assertEqual(result['parametros'].get('folio'), folio)
+                self.assertEqual(classify_intent(text)['intencion'], 'SIN_COINCIDENCIA')
+        import services.voice_service as voice_service
+        self.assertFalse(hasattr(voice_service, 'process_voice_command'))
+        self.assertFalse(hasattr(voice_service, 'COMMANDS'))
 
     def test_no_match(self):
         for text in ['buenos días', 'mañana tengo clases temprano', 'ayudante', 'iniciar búsqueda', 'detener seguimiento del folio abc']:

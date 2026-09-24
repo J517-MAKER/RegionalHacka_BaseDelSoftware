@@ -8,6 +8,6 @@ def get_settings():
 
 
 def save_settings(section, values):
-    actor = require('settings')
+    actor = require('settings.manage')
     store.settings[section].update(values)
     store.audit(actor,'Configuración',f'Actualizó preferencias de {section}')

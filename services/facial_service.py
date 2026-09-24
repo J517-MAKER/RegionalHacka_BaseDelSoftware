@@ -1,7 +1,7 @@
 import hashlib
 import config
 from services import face_engine, store
-from services.users_service import require
+from services.users_service import can, require
 from services.db_service import buscar_coincidencias_rostro, guardar_captura_rostro
 
 def get_detection(detection_id):
@@ -25,8 +25,15 @@ def get_matches(case_id=None, vector_busqueda=None):
     ]
 
 def review_match(match_id, status):
-    """Actualiza el estado de revisión de una coincidencia y genera un registro de auditoría."""
-    actor = require('review')
+    """Actualiza el estado de revisión de una coincidencia y genera un registro de auditoría.
+
+    Un operador revisa en primer nivel; un supervisor resuelve lo que se le escaló. Sólo
+    el operador puede escalar, porque enviarse trabajo a sí mismo no es una segunda revisión.
+    """
+    if status == 'En revisión':
+        actor = require('matches.review')
+    else:
+        actor = require('matches.supervise') if can('matches.supervise') else require('matches.review')
     match = next(m for m in store.matches if m.id == match_id)
     match.status, match.reviewed_by, match.reviewed_at = status, actor, store.now()
     

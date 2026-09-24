@@ -18,7 +18,7 @@ def get_case(case_id):
 
 
 def create_case(data):
-    actor = require('case')
+    actor = require('cases.manage')
     name = str(data.get('name','')).strip()
     if not name:
         raise ValueError('Escribe el nombre o indica «Persona desconocida».')
@@ -43,7 +43,7 @@ def photo_data_url(content, content_type):
 
 
 def add_case_photo(case_id,content,content_type):
-    actor=require('case')
+    actor=require('cases.manage')
     case=get_case(case_id)
     if not case:
         raise ValueError('No se encontró este expediente.')

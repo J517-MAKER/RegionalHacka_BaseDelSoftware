@@ -1,5 +1,5 @@
 from nicegui import ui, run
-from components.layout import PageLayout, Panel, notify_action
+from components.layout import PageLayout,Panel,notify_action,guard_page
 from components.alert_preview import DocumentPreview, ExtractedPhoto, ExtractionStatus, MatchBlocks
 from models.alert_import_record import EDITABLE_FIELDS, LONG_FIELDS
 from services.alert_import_service import (analyze_alert, cancel_import, create_case_from_alert, link_to_case,
@@ -10,6 +10,8 @@ from services.users_service import can, require
 
 @ui.page('/cases/import-alert')
 def import_alert_page():
+    if not guard_page('/cases', 'cases.import'):
+        return
     with PageLayout('/cases', 'Importar alerta de búsqueda',
                     'Cargar una ficha de búsqueda para extraer información y generar un caso.'):
         state = {'record': None, 'fields': {}}
@@ -39,13 +41,13 @@ def import_alert_page():
                             value = getattr(record, key) or ''
                             field = (ui.textarea(label, value=value).props('outlined autogrow')
                                      if key in LONG_FIELDS else ui.input(label, value=value).props('outlined dense'))
-                            field.set_enabled(can('case'))
+                            field.set_enabled(can('cases.import'))
                             state['fields'][key] = field
                     with ui.row().classes('gap-2'):
                         ui.button('Guardar correcciones', icon='save', on_click=save_edits) \
-                            .props('outline no-caps').set_enabled(can('case'))
+                            .props('outline no-caps').set_enabled(can('cases.import'))
                         ui.button('Analizar coincidencias', icon='travel_explore', on_click=match) \
-                            .props('unelevated no-caps').set_enabled(can('case'))
+                            .props('unelevated no-caps').set_enabled(can('cases.import'))
                     if record.ocr_text:
                         with ui.expansion('Ver texto leído del documento').classes('w-full'):
                             ui.label(record.ocr_text).classes('text-xs whitespace-pre-wrap muted')
@@ -64,19 +66,19 @@ def import_alert_page():
                     else:
                         with ui.row().classes('gap-2 flex-wrap'):
                             ui.button('Crear caso nuevo', icon='add', on_click=create) \
-                                .props('unelevated no-caps').set_enabled(can('case'))
+                                .props('unelevated no-caps').set_enabled(can('cases.import'))
                             ui.button('Vincular con caso existente', icon='link', on_click=link_dialog) \
-                                .props('outline no-caps').set_enabled(can('case'))
+                                .props('outline no-caps').set_enabled(can('cases.import'))
                             ui.button('Enviar a revisión', icon='fact_check', on_click=review) \
-                                .props('outline no-caps').set_enabled(can('case'))
+                                .props('outline no-caps').set_enabled(can('cases.import'))
                             ui.button('Cancelar importación', icon='close', on_click=cancel) \
-                                .props('flat no-caps').set_enabled(can('case'))
+                                .props('flat no-caps').set_enabled(can('cases.import'))
                         ui.label('Crear o vincular no confirma la identidad de la persona: el expediente queda '
                                  'pendiente de validación.').classes('text-xs muted')
 
         async def upload(event):
             try:
-                actor = require('case')  # the session is not readable inside run.io_bound threads
+                actor = require('cases.import')  # the session is not readable inside run.io_bound threads
                 content = await event.file.read()
                 record_id, path, kind = await run.io_bound(save_upload, content, event.file.content_type,
                                                            event.file.name, actor)
@@ -104,7 +106,7 @@ def import_alert_page():
 
         async def match():
             update_fields(state['record'].id, collect())
-            actor = require('case')
+            actor = require('cases.import')
             status.set_text('Comparando con casos, cámaras y rango temporal…')
             spinner.set_visibility(True)
             try:
@@ -158,7 +160,7 @@ def import_alert_page():
                                      on_rejected=lambda: ui.notify('Archivo rechazado. Revisa el formato y el límite de 10 MB.',
                                                                    type='warning')) \
                     .props('accept=.png,.jpg,.jpeg,.webp,.pdf flat bordered').classes('w-full')
-                uploader.set_enabled(can('case'))
+                uploader.set_enabled(can('cases.import'))
                 with ui.row().classes('items-center gap-3'):
                     spinner = ui.spinner(size='18px')
                     spinner.set_visibility(False)

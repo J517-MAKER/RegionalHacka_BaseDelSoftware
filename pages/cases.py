@@ -1,5 +1,5 @@
 from nicegui import ui
-from components.layout import PageLayout
+from components.layout import PageLayout,guard_page
 from components.search_filters import SearchFilters
 from components.case_form import NewCaseDialog
 from components.states import EmptyState
@@ -10,6 +10,8 @@ from services.users_service import can
 
 @ui.page('/cases')
 def cases_page():
+    if not guard_page('/cases', 'cases.view'):
+        return
     with PageLayout('/cases','Casos de búsqueda','Registro y consulta de expedientes de personas desaparecidas.'):
         fields={}
         @ui.refreshable
@@ -36,8 +38,11 @@ def cases_page():
             table.on('open',lambda e:ui.navigate.to(f'/cases/{e.args}'))
         with ui.row().classes('items-center justify-between w-full'):
             ui.label('EXPEDIENTES / DATOS DE PRUEBA').classes('eyebrow')
+            # Registering a case is operational work: supervisor and administrator only consult.
             with ui.row().classes('gap-2'):
-                ui.button('Crear caso desde alerta',icon='document_scanner',on_click=lambda:ui.navigate.to('/cases/import-alert')).props('unelevated no-caps').set_enabled(can('case'))
-                ui.button('Nueva búsqueda manual',icon='add',on_click=lambda:NewCaseDialog()).props('outline no-caps').set_enabled(can('case'))
+                if can('cases.import'):
+                    ui.button('Crear caso desde alerta',icon='document_scanner',on_click=lambda:ui.navigate.to('/cases/import-alert')).props('unelevated no-caps')
+                if can('cases.manage'):
+                    ui.button('Nueva búsqueda manual',icon='add',on_click=lambda:NewCaseDialog()).props('outline no-caps')
         fields.update(SearchFilters(lambda:case_table.refresh(),statuses=['En búsqueda','Pausada'],zones=sorted({c.zone for c in get_cases()}),owners=sorted({c.owner for c in get_cases()}),with_date=True))
         case_table()

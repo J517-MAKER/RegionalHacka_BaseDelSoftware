@@ -124,9 +124,9 @@ class AssistantTest(unittest.TestCase):
             with self.assertRaises(PermissionError):
                 handle_command('búscame el folio 184')
         from services.users_service import PERMISSIONS
-        self.assertIn('assistant', PERMISSIONS['Administrador'])
+        self.assertIn('assistant.use', PERMISSIONS['Administrador'])
         for role in ('Operador', 'Supervisor'):
-            self.assertNotIn('assistant', PERMISSIONS[role])
+            self.assertNotIn('assistant.use', PERMISSIONS[role])
 
     def test_sensitive_intents_are_rejected(self):
         command = AssistantCommand(intent='OPEN_CASE', folio='184')

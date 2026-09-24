@@ -1,14 +1,14 @@
 from datetime import datetime
 from nicegui import ui
 from services.live_recognition_service import live
-from services.users_service import get_current_user, get_users, switch_demo_user
+from services.users_service import context_labels, get_current_user, get_users, switch_demo_user
 
 
 def Header(drawer):
     user = get_current_user()
     with ui.header().classes('topbar items-center flex-row gap-4'):
         ui.button(icon='menu',on_click=drawer.toggle).props('flat dense round aria-label="Abrir navegación"').classes('drawer-toggle')
-        ui.label('Centro de operaciones / Región Centro').classes('topbar-title')
+        ui.label(context_labels()[0]).classes('topbar-title')
         ui.space()
         with ui.row().classes('items-center gap-2 header-connection'):
             ui.element('span').classes('status-dot text-[#357358]')

@@ -1,11 +1,13 @@
 from nicegui import ui
-from components.layout import PageLayout,Panel,notify_action
+from components.layout import PageLayout,Panel,notify_action,guard_page
 from services.settings_service import get_settings,save_settings
 from services.users_service import can
 
 
 @ui.page('/settings')
 def settings_page():
+    if not guard_page('/settings', 'settings.manage'):
+        return
     with PageLayout('/settings','Configuración','Preferencias de demostración y puntos de integración del sistema.'):
         ui.label('Valores de referencia guardados en memoria. Los conectores reales, las políticas de sesión y los umbrales no se ejecutan en esta demo.').classes('notice')
         settings=get_settings()
@@ -25,14 +27,14 @@ def settings_page():
                                 else:
                                     field=ui.input(key,value=value).props('outlined dense')
                                 field.classes('w-full')
-                                field.set_enabled(can('settings') and name not in ('Integraciones','Voz'))
+                                field.set_enabled(can('settings.manage') and name not in ('Integraciones','Voz'))
                                 fields[key]=field
                             if name not in ('Integraciones','Voz'):
-                                ui.button('Guardar cambios',on_click=lambda n=name,f=fields:notify_action(lambda:save_settings(n,{k:v.value for k,v in f.items()}),'Configuración guardada.')).props('unelevated no-caps').set_enabled(can('settings'))
+                                ui.button('Guardar cambios',on_click=lambda n=name,f=fields:notify_action(lambda:save_settings(n,{k:v.value for k,v in f.items()}),'Configuración guardada.')).props('unelevated no-caps').set_enabled(can('settings.manage'))
                             if name=='Integraciones':
                                 for service,label in [('cases_service.py','Casos y reportes'),('cameras_service.py','Cámaras y estado de red'),('facial_service.py','Reconocimiento y validación'),('tracking_service.py','Reidentificación y seguimiento'),('voice_service.py','Transcripción e intenciones'),('alerts_service.py','Recepción y revisión de eventos')]:
                                     with ui.row().classes('w-full py-2 border-b border-[#edf0f2] justify-between'):
                                         ui.label(label).classes('text-xs')
                                         ui.label(service).classes('mono muted')
-                            if not can('settings'):
-                                ui.label('Consulta disponible. Para editar, usa una sesión de Supervisor o Administrador.').classes('text-xs muted')
+                            if not can('settings.manage'):
+                                ui.label('Consulta disponible. La configuración global corresponde al Administrador.').classes('text-xs muted')

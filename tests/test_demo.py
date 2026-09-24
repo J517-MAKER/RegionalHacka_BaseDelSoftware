@@ -88,7 +88,7 @@ class DemoFlowTest(unittest.IsolatedAsyncioTestCase):
 
             with user:
                 switch_demo_user('USR-03')
-            await user.open('/alerts')
+            await user.open('/supervision')
             await user.should_see('Solicitudes de eliminación')
             user.find('APROBAR').click()
             await asyncio.sleep(.2)
@@ -133,6 +133,95 @@ class DemoFlowTest(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(1.4)
             await user.should_see('Detalle del caso')
 
+
+    async def test_operator_sees_only_operational_tools(self):
+        async with simulation() as user:
+            await user.open('/monitor')
+            for label in ['Centro de monitoreo','Casos de búsqueda','Cámaras','Reconocimiento en vivo',
+                          'Coincidencias','Mapa y seguimiento','Alertas de auxilio','Detección de auxilio',
+                          'Historial operativo']:
+                user.find(label)
+            for hidden in ['Usuarios y permisos','Configuración','Bandeja de supervisión','Auditoría completa']:
+                with self.assertRaises(AssertionError):
+                    user.find(hidden)
+            with self.assertRaises(AssertionError):  # the assistant belongs to the administrator
+                user.find(marker='assistant-button')
+            # The operator asks for a deletion but never authorises one.
+            await user.open('/alerts')
+            with self.assertRaises(AssertionError):
+                user.find('APROBAR')
+
+    async def test_supervisor_works_from_the_supervision_tray(self):
+        async with simulation() as user:
+            from services.users_service import switch_demo_user
+            from services.facial_service import request_review
+            await user.open('/monitor')
+            with user:
+                # Escalating is the operator's move; the supervisor only resolves it.
+                request_review('MAT-001')
+                switch_demo_user('USR-03')
+            await user.open('/')
+            await user.should_see(content='Centro de supervisión',marker='page-title')
+            for label in ['Bandeja de supervisión','Evidencia en revisión','Coincidencias en revisión',
+                          'Solicitudes de eliminación','Auditoría operativa']:
+                user.find(label)
+            for hidden in ['Centro de monitoreo','Reconocimiento en vivo','Usuarios y permisos','Configuración']:
+                with self.assertRaises(AssertionError):
+                    user.find(hidden)
+            with self.assertRaises(AssertionError):
+                user.find(marker='assistant-button')
+            # Operational tools stay closed even when the URL is typed by hand.
+            for route in ('/live','/voice','/monitor','/cases/import-alert','/users','/settings'):
+                await user.open(route)
+                await user.should_see(content='Acceso restringido',marker='page-title')
+            # A case may be consulted, but not created from here.
+            await user.open('/cases')
+            with self.assertRaises(AssertionError):
+                user.find('Nueva búsqueda manual')
+            with user:
+                with self.assertRaises(PermissionError):
+                    from services.cases_service import create_case
+                    create_case({'name':'Intento de supervisor'})
+                with self.assertRaises(PermissionError):  # a supervisor cannot escalate to themselves
+                    request_review('MAT-002')
+            await user.open('/supervision')
+            await user.should_see('Pendientes de revisión')
+            await user.should_see('MAT-001')
+
+    async def test_administrator_administers_and_reads(self):
+        async with simulation() as user:
+            from services.users_service import switch_demo_user
+            await user.open('/monitor')
+            with user:
+                switch_demo_user('USR-04')
+            await user.open('/')
+            await user.should_see(content='Usuarios y permisos',marker='page-title')
+            for label in ['Usuarios y permisos','Configuración','Auditoría completa']:
+                user.find(label)
+            for hidden in ['Centro de monitoreo','Reconocimiento en vivo','Detección de auxilio',
+                           'Bandeja de supervisión']:
+                with self.assertRaises(AssertionError):
+                    user.find(hidden)
+            user.find(marker='assistant-button')  # the assistant is the administrator's tool
+            # Operating a camera or the microphone is not an administrative task.
+            for route in ('/live','/voice','/supervision','/monitor'):
+                await user.open(route)
+                await user.should_see(content='Acceso restringido',marker='page-title')
+            # Pages the assistant navigates to open in read-only mode.
+            await user.open('/cases/BUS-2026-0184')
+            await user.should_see(content='Detalle del caso',marker='page-title')
+            with self.assertRaises(AssertionError):
+                user.find('Añadir referencia de prueba')
+            await user.open('/matches?match_id=MAT-001')
+            for hidden in ['Validar como posible coincidencia','Descartar','Solicitar revisión']:
+                with self.assertRaises(AssertionError):
+                    user.find(hidden)
+            await user.open('/alerts')
+            with self.assertRaises(AssertionError):
+                user.find('CONFIRMAR PARA ATENCIÓN')
+            await user.open('/history')
+            await user.should_see(content='Auditoría completa',marker='page-title')
+
     async def test_operator_demo_end_to_end(self):
         collector=ErrorCollector()
         logging.getLogger().addHandler(collector)
@@ -141,7 +230,6 @@ class DemoFlowTest(unittest.IsolatedAsyncioTestCase):
                 from services import store
                 from services.users_service import switch_demo_user,update_user
                 from services.cases_service import create_case,photo_data_url
-                from services.voice_service import process_voice_command
 
                 for route,title in [('/monitor','Centro de monitoreo'),('/cases','Casos de búsqueda'),
                                     ('/cases/BUS-2026-0184','Detalle del caso'),
@@ -149,10 +237,14 @@ class DemoFlowTest(unittest.IsolatedAsyncioTestCase):
                                     ('/live','Reconocimiento facial en vivo'),
                                     ('/matches','Revisión de coincidencias'),('/tracking','Mapa y seguimiento'),
                                     ('/alerts','Revisión de evidencia'),('/voice','Detección de auxilio por voz'),
-                                    ('/history','Historial de operaciones'),('/users','Usuarios y permisos'),
-                                    ('/settings','Configuración')]:
+                                    ('/history','Historial operativo')]:
                     await user.open(route)
                     await user.should_see(content=title,marker='page-title')
+
+                # Administration and supervision are other people's jobs: typing the URL is not enough.
+                for route in ('/users','/settings','/supervision'):
+                    await user.open(route)
+                    await user.should_see(content='Acceso restringido',marker='page-title')
 
                 await user.open('/cases')
                 user.find('Buscar nombre o folio').type('sin coincidencias de prueba')
@@ -202,18 +294,6 @@ class DemoFlowTest(unittest.IsolatedAsyncioTestCase):
                 await user.should_see('Módulo de seguimiento pendiente de integración.')
 
                 with user:
-                    self.assertFalse(process_voice_command('mensaje sin intención')['recognized'])
-                    from nicegui import app
-                    from services.voice_integrations import execute_authority_command
-                    with patch('services.voice_integrations.execute_authority_command', wraps=execute_authority_command) as execute:
-                        result=process_voice_command('iniciar búsqueda del folio 527')
-                        self.assertTrue(result['recognized'])
-                        execute.assert_not_called()
-                        app.storage.user['authenticated']=True
-                        result=process_voice_command('iniciar búsqueda del folio 527')
-                        self.assertTrue(result['mock'])
-                        execute.assert_called_once()
-                        app.storage.user['authenticated']=False
                     with self.assertRaises(PermissionError):
                         update_user('USR-02','Supervisor','Activo')
                     with self.assertRaises(ValueError):

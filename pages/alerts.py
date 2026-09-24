@@ -1,13 +1,12 @@
 from nicegui import ui
-from components.layout import PageLayout, Panel, notify_action
+from components.layout import PageLayout,notify_action,guard_page
 from components.alert_table import EvidenceTable
 from components.person_profile import InfoPair
 from components.status_badge import StatusBadge
-from components.states import EmptyState
 from services.alerts_service import start_alert_tracking
 from services.cameras_service import get_camera, get_nearby_cameras
-from services.evidence_service import (get_deletion_requests, get_evidence, get_event, register_playback,
-                                       request_deletion, resolve_deletion, review_event, verify_integrity)
+from services.evidence_service import (get_evidence, get_event, register_playback,
+                                       request_deletion, review_event, verify_integrity)
 from services import store
 from services.users_service import can
 
@@ -18,6 +17,8 @@ REVIEW_BUTTONS = [('CONFIRMAR PARA ATENCIÓN', 'CONFIRMADO_PARA_ATENCION', 'Even
 
 @ui.page('/alerts')
 def alerts_page(status:str=''):
+    if not guard_page('/alerts', 'alerts.view'):
+        return
     with PageLayout('/alerts', 'Revisión de evidencia',
                     'Eventos de voz para evaluación de una autoridad. La detección no confirma la existencia de un delito.'):
         selected = {'id': None}
@@ -81,25 +82,32 @@ def alerts_page(status:str=''):
                     def changed():
                         table.refresh()
                         detail.refresh()
-                        requests.refresh()
 
-                    ui.label('REVISIÓN').classes('eyebrow mt-3')
-                    with ui.row().classes('gap-2 flex-wrap'):
-                        for label, status, message in REVIEW_BUTTONS:
-                            ui.button(label, on_click=lambda s=status, m=message:
-                                      notify_action(lambda: review_event(event.event_id, s), m, changed)
-                                      ).props('outline no-caps').set_enabled(can('review'))
-                        ui.button('SOLICITAR ELIMINACIÓN', icon='gavel',
-                                  on_click=lambda: deletion_dialog(event.event_id, changed)
-                                  ).props('flat no-caps').set_enabled(can('deletion.request'))
-                    ui.label('Marcar un falso positivo no elimina evidencia. La eliminación requiere autorización '
-                             'de un supervisor distinto a quien la solicita.').classes('text-xs muted')
+                    # First-level review belongs to the operator. Authorising a deletion is a
+                    # supervisor's job and lives in /supervision, never beside the request.
+                    if can('alerts.review') or can('deletion.request'):
+                        ui.label('REVISIÓN').classes('eyebrow mt-3')
+                        with ui.row().classes('gap-2 flex-wrap'):
+                            if can('alerts.review'):
+                                for label, status, message in REVIEW_BUTTONS:
+                                    ui.button(label, on_click=lambda s=status, m=message:
+                                              notify_action(lambda: review_event(event.event_id, s), m, changed)
+                                              ).props('outline no-caps')
+                            if can('deletion.request'):
+                                ui.button('SOLICITAR ELIMINACIÓN', icon='gavel',
+                                          on_click=lambda: deletion_dialog(event.event_id, changed)
+                                          ).props('flat no-caps')
+                        ui.label('Marcar un falso positivo no elimina evidencia. La eliminación requiere autorización '
+                                 'de un supervisor distinto a quien la solicita.').classes('text-xs muted')
+                    else:
+                        ui.label('Consulta de evidencia. Las acciones de revisión corresponden al operador '
+                                 'y la autorización de eliminación al supervisor.').classes('text-xs muted mt-3')
                     alert = next((a for a in store.alerts if a.voice_event_id == event.voice_event_id), None)
-                    if alert:
+                    if alert and can('tracking.control'):
                         ui.button('Iniciar seguimiento', icon='route',
                                   on_click=lambda: notify_action(lambda: start_alert_tracking(alert.id),
                                                                  'Seguimiento solicitado. Módulo de seguimiento pendiente de integración.',
-                                                                 changed)).props('unelevated no-caps').set_enabled(can('track'))
+                                                                 changed)).props('unelevated no-caps')
                     if event.reviewed_by:
                         ui.label(f'{event.reviewed_by} · {event.reviewed_at}').classes('text-xs muted')
             detail()
@@ -133,35 +141,6 @@ def alerts_page(status:str=''):
                 rows = [e for e in rows if text in (e.transcript_original + ' ' + e.camera_id).lower()]
             EvidenceTable(rows, select)
 
-        @ui.refreshable
-        def requests():
-            if not can('deletion.approve'):
-                return
-            with Panel('Solicitudes de eliminación', 'SUPERVISIÓN'):
-                with ui.column().classes('p-4 w-full gap-2'):
-                    pending = get_deletion_requests()
-                    if not pending:
-                        EmptyState('No hay solicitudes de eliminación registradas.')
-                    for item in pending:
-                        with ui.row().classes('items-center justify-between w-full border-b border-[#edf0f2] py-2'):
-                            with ui.column().classes('gap-0'):
-                                ui.label(f'{item.event_id} · {item.request_id}').classes('text-sm font-medium')
-                                ui.label(f'Solicitado por {item.requested_by} · {item.requested_at}').classes('text-xs muted')
-                                ui.label(f'Motivo: {item.reason}').classes('text-xs')
-                                if item.reviewed_by:
-                                    ui.label(f'{item.status} por {item.reviewed_by} · {item.reviewed_at}').classes('text-xs muted')
-                            if item.status == 'PENDING':
-                                def resolve(request_id=item.request_id, approve=True):
-                                    notify_action(lambda: resolve_deletion(request_id, approve),
-                                                  'Solicitud aprobada. El archivo original se conserva y queda registrada la operación.'
-                                                  if approve else 'Solicitud rechazada. La evidencia permanece.',
-                                                  lambda: (table.refresh(), detail.refresh(), requests.refresh()))
-                                with ui.row().classes('gap-2'):
-                                    ui.button('APROBAR', on_click=lambda r=item.request_id: resolve(r, True)).props('outline no-caps')
-                                    ui.button('RECHAZAR', on_click=lambda r=item.request_id: resolve(r, False)).props('flat no-caps')
-                            else:
-                                StatusBadge(item.status)
-
         with ui.element('div').classes('toolbar'):
             query = ui.input('Buscar cámara o frase', on_change=lambda: table.refresh()).props('outlined dense clearable')
             state = ui.select(['Todos', 'PENDIENTE_REVISION', 'EN_REVISION', 'CONFIRMADO_PARA_ATENCION',
@@ -169,5 +148,4 @@ def alerts_page(status:str=''):
                               value=status or 'Todos', label='Estado', on_change=lambda: table.refresh()).props('outlined dense')
             ui.button('Actualizar', icon='refresh', on_click=lambda: table.refresh()).props('outline no-caps')
         table()
-        requests()
         ui.timer(10, table.refresh)

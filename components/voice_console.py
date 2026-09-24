@@ -56,7 +56,7 @@ def MonitoringConsole(on_event=None):
                       on_click=lambda: ui.navigate.to('/alerts')).props('unelevated no-caps').classes('mt-2')
 
     def controls():
-        start_button.set_enabled(not session.running and can('voice'))
+        start_button.set_enabled(not session.running and can('voice.monitor'))
         stop_button.set_enabled(session.running)
         camera.set_enabled(not session.running)
 
@@ -65,7 +65,7 @@ def MonitoringConsole(on_event=None):
             return
         state['busy'] = True
         try:
-            session.actor = require('voice')
+            session.actor = require('voice.monitor')
             session.camera_id = camera.value
             await run.io_bound(session.start)
             ui.notify('Monitoreo iniciado. El audio ordinario no se almacena.', type='positive', position='bottom-right')

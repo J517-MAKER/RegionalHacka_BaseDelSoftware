@@ -1,5 +1,5 @@
 from nicegui import ui
-from components.layout import PageLayout
+from components.layout import PageLayout,guard_page
 from components.camera_grid import CameraGrid
 from components.camera_feed import CameraFeed
 from components.status_badge import StatusBadge
@@ -12,6 +12,8 @@ import config
 
 @ui.page('/cameras')
 def cameras_page(camera_id:str=''):
+    if not guard_page('/cameras', 'cameras.view'):
+        return
     with PageLayout('/cameras','Red de cámaras','Vistas de prueba de la red distribuida. Selecciona una cámara para consultar su información.'):
         with ui.right_drawer(value=False).props('width=370 bordered overlay').classes('p-0') as drawer:
             detail=ui.column().classes('w-full gap-0')

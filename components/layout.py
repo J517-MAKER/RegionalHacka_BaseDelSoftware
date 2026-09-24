@@ -4,10 +4,11 @@ from theme import apply_theme
 from components.sidebar import Sidebar
 from components.header import Header
 from components.admin_voice_assistant import AdminVoiceAssistant
+from services.users_service import can_any, context_labels, home_route
 
 
 @contextmanager
-def PageLayout(active,title,subtitle,eyebrow='CENTRO DE OPERACIONES'):
+def PageLayout(active,title,subtitle,eyebrow=None):
     apply_theme()
     ui.page_title(f'{title} · NEXO')
     drawer = Sidebar(active)
@@ -15,7 +16,7 @@ def PageLayout(active,title,subtitle,eyebrow='CENTRO DE OPERACIONES'):
     AdminVoiceAssistant()  # single instance for every page; hidden for non-administrators
     with ui.element('div').classes('page-heading'):
         with ui.column().classes('gap-0'):
-            ui.label(eyebrow).classes('eyebrow')
+            ui.label(eyebrow or context_labels()[1]).classes('eyebrow')
             ui.label(title).mark('page-title').props('role=heading aria-level=1').classes('text-[25px] font-medium tracking-tight')
             ui.label(subtitle).classes('subtitle mt-1')
         with ui.row().classes('items-center gap-2'):
@@ -25,6 +26,23 @@ def PageLayout(active,title,subtitle,eyebrow='CENTRO DE OPERACIONES'):
     with ui.element('div').classes('footer-line'):
         ui.label('NEXO / Uso institucional · Información de demostración')
         ui.label('Toda detección requiere revisión humana · v0.1')
+
+
+def guard_page(active,*permissions):
+    """Single gate for every route. Hiding a link is not access control: a page whose
+    permission the session lacks is not rendered at all, however it was reached."""
+    if can_any(*permissions):
+        return True
+    with PageLayout(active,'Acceso restringido',
+                    'Tu rol no tiene permiso para consultar esta sección.'):
+        with ui.element('section').classes('panel'):
+            with ui.column().classes('panel-body items-start gap-3 p-6'):
+                ui.icon('lock_outline',size='30px',color='blue-grey-4')
+                ui.label('Esta sección pertenece a otra responsabilidad dentro de NEXO. '
+                         'Cada rol trabaja únicamente con sus propias herramientas.').classes('text-sm')
+                ui.button('Volver',icon='arrow_back',
+                          on_click=lambda:ui.navigate.to(home_route())).props('unelevated no-caps')
+    return False
 
 
 @contextmanager

@@ -18,7 +18,8 @@ app.add_media_files('/evidence/audio',str(config.EVIDENCE_AUDIO_DIR))
 # Fichas importadas: vista previa y recorte temporales de la importación en curso.
 app.add_static_files('/imports',str(config.IMPORT_DIR))
 
-from pages import monitor,cases,import_alert,case_detail,cameras,live,matches,tracking,alerts,voice,history,users,settings  # noqa: E402,F401
+from pages import (monitor,cases,import_alert,case_detail,cameras,live,matches,tracking,alerts,voice,  # noqa: E402,F401
+                   history,users,settings,supervision)  # noqa: E402,F401
 from services.live_recognition_service import live as live_recognition  # noqa: E402
 
 
@@ -40,7 +41,9 @@ if not app.is_started:  # the interface tests re-execute this module
 
 @ui.page('/')
 def index():
-    ui.navigate.to('/monitor')
+    # Each role lands on its own console instead of always on the operator's monitor.
+    from services.users_service import home_route
+    ui.navigate.to(home_route())
 
 
 if __name__ in {'__main__','__mp_main__'}:

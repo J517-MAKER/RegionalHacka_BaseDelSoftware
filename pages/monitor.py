@@ -1,6 +1,6 @@
 # pyrefly: ignore [missing-import]
 from nicegui import ui
-from components.layout import PageLayout,Panel
+from components.layout import PageLayout,Panel,guard_page
 from components.map_view import MapView,update_map
 from components.activity_log import ActivityLog
 from components.camera_feed import CameraFeed
@@ -14,6 +14,8 @@ from services.history_service import get_history
 
 @ui.page('/monitor')
 def monitor_page():
+    if not guard_page('/monitor', 'monitor.view'):
+        return
     with PageLayout('/monitor','Centro de monitoreo','Supervisión de búsquedas, cámaras y eventos pendientes de revisión.'):
         @ui.refreshable
         def stats():

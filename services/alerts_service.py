@@ -29,7 +29,7 @@ def create_voice_alert(event):
 
 
 def start_alert_tracking(alert_id):
-    actor = require('track')
+    actor = require('tracking.control')
     alert = get_alert(alert_id)
     if not alert:
         raise ValueError('No se encontró la alerta.')

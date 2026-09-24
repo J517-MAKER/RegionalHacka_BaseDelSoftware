@@ -46,7 +46,7 @@ def get_phrases():
 
 
 def set_phrases(text):
-    actor = require('settings')
+    actor = require('settings.manage')
     store.phrases[:] = list(dict.fromkeys(p.strip() for p in text.splitlines() if p.strip()))
     store.audit(actor, 'Configuración', 'Actualizó frases de auxilio')
 
@@ -56,16 +56,12 @@ def normalize(text):
     return ' '.join(re.sub(r'[^a-z0-9\s]', ' ', text).split())
 
 
-COMMANDS = {
-    'iniciar busqueda': 'INICIAR_BUSQUEDA', 'detener busqueda': 'DETENER_BUSQUEDA',
-    'mostrar ultima deteccion': 'MOSTRAR_ULTIMA_DETECCION', 'mostrar coincidencias': 'MOSTRAR_COINCIDENCIAS',
-    'mostrar camaras cercanas': 'MOSTRAR_CAMARAS_CERCANAS',
-    'continuar seguimiento': 'INICIAR_SEGUIMIENTO', 'iniciar seguimiento': 'INICIAR_SEGUIMIENTO',
-    'detener seguimiento': 'DETENER_SEGUIMIENTO', 'marcar coincidencia como incorrecta': 'DESCARTAR_COINCIDENCIA',
-}
-
-
 def classify_intent(text):
+    """Distress detection only.
+
+    Administrative spoken orders are not interpreted here: they belong exclusively to
+    services/admin_voice_assistant_service.py, behind the administrator's permission.
+    """
     normalized = normalize(text)
     result = {'intencion': 'SIN_COINCIDENCIA', 'subtipo': None, 'accion': None, 'parametros': {}}
     rules = [
@@ -77,37 +73,16 @@ def classify_intent(text):
     for subtype, pattern in rules:
         if re.search(pattern, normalized):
             return dict(result, intencion='SOLICITUD_AUXILIO', subtipo=subtype)
-    for phrase, action in COMMANDS.items():
-        match = re.fullmatch(r'(?:por favor )?' + phrase + r'(?: (?:del |el )?folio (\d+))?(?: por favor)?', normalized)
-        if match and (match[1] or action in ('MOSTRAR_CAMARAS_CERCANAS', 'DESCARTAR_COINCIDENCIA')):
-            return dict(result, intencion='COMANDO_AUTORIDAD', accion=action,
-                        parametros={'folio': match[1]} if match[1] else {})
     if any(re.search(r'\b' + re.escape(normalize(p)) + r'\b', normalized) for p in store.phrases if normalize(p)):
         return dict(result, intencion='SOLICITUD_AUXILIO', subtipo='AUXILIO_GENERAL')
     return result
-
-
-def process_voice_command(text):
-    parsed = classify_intent(text)
-    if parsed['intencion'] != 'COMANDO_AUTORIDAD':
-        return dict(parsed, recognized=False, message='La frase no corresponde a un comando configurado.')
-    from nicegui import app
-    actor = require('voice')
-    # Only a future server-side credential verification may set this flag.
-    if app.storage.user.get('authenticated', False) is not True:
-        return dict(parsed, recognized=True, executed=False, mock=True,
-                    message='Comando reconocido correctamente. Ejecución bloqueada: la sesión de demostración no está autenticada.')
-    from services.voice_integrations import execute_authority_command
-    result = execute_authority_command(parsed['accion'], parsed['parametros'])
-    store.audit(actor, 'Comando de voz', f"Operador ejecutó comando de voz {parsed['accion']} (integración pendiente)", result='MOCK')
-    return dict(parsed, recognized=True, executed=False, **result)
 
 
 def process_text(text, camera_id=None, source='MICROPHONE', recognition_metadata=None,
                  assessment=None, context=None, audio=None, actor=None):
     """actor is supplied by the background monitor, authorised when the session started."""
     if actor is None:
-        require('voice')
+        require('voice.monitor')
     camera_id = camera_id or config.DEFAULT_CAMERA_ID
     from services.cameras_service import get_camera
     camera = get_camera(camera_id)
@@ -120,21 +95,16 @@ def process_text(text, camera_id=None, source='MICROPHONE', recognition_metadata
                        intent=parsed['intencion'], subtype=parsed['subtipo'], location=camera.location,
                        text_normalized=normalize(text), source=source, action=parsed['accion'],
                        parameters=parsed['parametros'], recognition_metadata=recognition_metadata or {})
-    if event.intent == 'COMANDO_AUTORIDAD' and actor is None:
-        event.command_result = process_voice_command(text)
-        event.status = 'COMANDO_RECONOCIDO'
-        event.classification, event.priority = 'NORMAL', '—'
-    else:
-        risk = assessment or analyze_text(text, context, audio)[0]
-        event.assessment = risk
-        event.classification, event.priority = risk.classification, risk.priority
-        event.intent = 'SOLICITUD_AUXILIO' if risk.should_create_alert else 'SIN_COINCIDENCIA'
-        event.subtype = parsed['subtipo'] if risk.should_create_alert else None
-        if risk.should_create_alert and not event.subtype:
-            event.subtype = 'AUXILIO_GENERAL'
-        event.status = 'PENDIENTE_REVISION' if risk.should_create_alert else 'REQUIERE_MAS_CONTEXTO' if risk.classification == 'AMBIGUO' else 'SIN_ALERTA'
-        if risk.classification == 'NORMAL':
-            event.expires_at = monotonic() + config.CONTEXT_SECONDS
+    risk = assessment or analyze_text(text, context, audio)[0]
+    event.assessment = risk
+    event.classification, event.priority = risk.classification, risk.priority
+    event.intent = 'SOLICITUD_AUXILIO' if risk.should_create_alert else 'SIN_COINCIDENCIA'
+    event.subtype = parsed['subtipo'] if risk.should_create_alert else None
+    if risk.should_create_alert and not event.subtype:
+        event.subtype = 'AUXILIO_GENERAL'
+    event.status = 'PENDIENTE_REVISION' if risk.should_create_alert else 'REQUIERE_MAS_CONTEXTO' if risk.classification == 'AMBIGUO' else 'SIN_ALERTA'
+    if risk.classification == 'NORMAL':
+        event.expires_at = monotonic() + config.CONTEXT_SECONDS
     store.voice_events.insert(0, event)
     if event.intent == 'SOLICITUD_AUXILIO':
         create_voice_alert(event)

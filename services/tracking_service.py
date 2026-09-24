@@ -9,7 +9,7 @@ def get_tracking_history(case_id):
 
 
 def start_tracking(case_id):
-    actor = require('track')
+    actor = require('tracking.control')
     case = next((c for c in store.cases if c.id==case_id),None)
     if not case:
         raise ValueError('No se encontró el caso.')
@@ -18,7 +18,7 @@ def start_tracking(case_id):
 
 
 def stop_tracking(case_id):
-    actor = require('track')
+    actor = require('tracking.control')
     case = next((c for c in store.cases if c.id==case_id),None)
     if not case:
         raise ValueError('No se encontró el caso.')

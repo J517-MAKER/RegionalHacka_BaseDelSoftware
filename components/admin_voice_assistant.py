@@ -50,7 +50,7 @@ def AdminVoiceAssistant():
     notice = app.storage.user.pop('assistant_notice', None)
     if notice:
         ui.timer(.1, lambda: ui.notify(notice, type='positive', position='bottom-right', timeout=3500), once=True)
-    if not can('assistant'):
+    if not can('assistant.use'):
         return None
     capture = MicrophoneCapture()
     state = {'name': 'IDLE', 'busy': False, 'open': False}
@@ -139,7 +139,7 @@ def AdminVoiceAssistant():
 
     async def begin():
         try:
-            require('assistant')
+            require('assistant.use')
             await run.io_bound(capture.start)
             render('LISTENING')
         except Exception as exc:
@@ -150,7 +150,7 @@ def AdminVoiceAssistant():
         render('PROCESSING')
         audio = None
         try:
-            actor = require('assistant')  # resolved here: the worker thread has no session
+            actor = require('assistant.use')  # resolved here: the worker thread has no session
             audio = await run.io_bound(capture.stop)
             said, _ = await run.io_bound(transcribe_audio, audio)
             result = await run.io_bound(handle_command, said, actor)

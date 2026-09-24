@@ -1,5 +1,5 @@
 from nicegui import ui
-from components.layout import PageLayout,Panel
+from components.layout import PageLayout,Panel,guard_page
 from components.person_profile import PersonProfile
 from components.map_view import MapView
 from components.timeline import Timeline
@@ -12,6 +12,8 @@ from services.facial_service import get_matches
 
 @ui.page('/cases/{case_id}')
 def case_detail_page(case_id:str):
+    if not guard_page('/cases', 'cases.view'):
+        return
     case=get_case(case_id)
     with PageLayout('/cases','Detalle del caso',case_id):
         ui.link('← Volver a casos de búsqueda','/cases').classes('text-xs no-underline')
@@ -39,7 +41,7 @@ def case_detail_page(case_id:str):
                         ui.notify('Fotografía de referencia añadida.',type='positive')
                     except (ValueError,PermissionError) as error:
                         ui.notify(str(error),type='warning')
-                if can('case'):
+                if can('cases.manage'):
                     ui.upload(label='Añadir referencia de prueba',on_upload=upload,auto_upload=True,max_file_size=5*1024*1024,
                               on_rejected=lambda:ui.notify('Imagen rechazada. Máximo 5 MB.',type='warning')).props('accept=.png,.jpg,.jpeg,.webp flat bordered').classes('w-full')
             with ui.column().classes('w-full gap-5'):

@@ -1,5 +1,5 @@
 from nicegui import ui
-from components.layout import PageLayout
+from components.layout import PageLayout,guard_page
 from components.match_comparison import MatchComparison
 from components.status_badge import StatusBadge
 from components.states import EmptyState
@@ -8,7 +8,9 @@ from services.cases_service import get_cases
 
 
 @ui.page('/matches')
-def matches_page(case_id:str='',match_id:str=''):
+def matches_page(case_id:str='',match_id:str='',review:str=''):
+    if not guard_page('/matches', 'matches.view'):
+        return
     selected={'id':match_id}
     with PageLayout('/matches','Revisión de coincidencias','Comparación de referencias y capturas para validación por un operador autorizado.'):
         @ui.refreshable
@@ -39,5 +41,7 @@ def matches_page(case_id:str='',match_id:str=''):
         with ui.element('div').classes('toolbar'):
             options={'':'Todos los casos',**{c.id:f'{c.id} · {c.person.name}' for c in get_cases()}}
             case_filter=ui.select(options,value=case_id if case_id in options else '',label='Caso',on_change=lambda:content.refresh()).props('outlined dense')
-            state=ui.select(['Todas','Pendiente de validación','En revisión','Validada por operador','Descartada'],value='Todas',label='Estado de revisión',on_change=lambda:content.refresh()).props('outlined dense')
+            states=['Todas','Pendiente de validación','En revisión','Validada por operador','Descartada']
+            # A supervisor arrives from the sidebar already filtered to what was escalated.
+            state=ui.select(states,value=review if review in states else 'Todas',label='Estado de revisión',on_change=lambda:content.refresh()).props('outlined dense')
         content()

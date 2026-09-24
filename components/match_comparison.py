@@ -27,11 +27,22 @@ def MatchComparison(match,on_change=None):
                              ('Nivel de similitud',f'{d.similarity} %'),('Calidad de imagen',d.quality)]:
             InfoPair(label,value)
     ui.label('El nivel de similitud es una referencia del sistema y no constituye una identificación definitiva.').classes('notice')
+    # The operator reviews at first level and may escalate; the supervisor only resolves what
+    # was escalated to them, and cannot escalate it back. An administrator just reads.
+    if can('matches.review'):
+        actions=[('Validar como posible coincidencia',validate_match,'Posible coincidencia validada por operador.'),
+                 ('Descartar',reject_match,'Coincidencia descartada.'),
+                 ('Solicitar revisión',request_review,'Evento enviado a revisión.')]
+    elif can('matches.supervise') and match.status=='En revisión':
+        actions=[('Resolver: validar coincidencia',validate_match,'Coincidencia validada en supervisión.'),
+                 ('Resolver: descartar',reject_match,'Coincidencia descartada en supervisión.')]
+    else:
+        actions=[]
     with ui.row().classes('gap-2 mt-4 flex-wrap'):
-        for label,action,success in [('Validar como posible coincidencia',validate_match,'Posible coincidencia validada por operador.'),
-                                     ('Descartar',reject_match,'Coincidencia descartada.'),('Solicitar revisión',request_review,'Evento enviado a revisión.')]:
-            button=ui.button(label,on_click=lambda a=action,s=success:notify_action(lambda:a(match.id),s,on_change)).props('no-caps '+('outline' if action!=validate_match else 'unelevated'))
-            button.set_enabled(can('review'))
+        for label,action,success in actions:
+            ui.button(label,on_click=lambda a=action,s=success:notify_action(lambda:a(match.id),s,on_change)).props('no-caps '+('outline' if action!=validate_match else 'unelevated'))
         ui.button('Ver trayectoria',on_click=lambda:ui.navigate.to(f'/tracking?case_id={case.id}')).props('flat no-caps')
+    if not actions:
+        ui.label('Consulta. La validación corresponde al operador y la resolución de lo escalado al supervisor.').classes('text-xs muted mt-2')
     if match.reviewed_by:
         ui.label(f'Revisión registrada: {match.reviewed_by} · {match.reviewed_at}').classes('text-xs muted mt-3')
