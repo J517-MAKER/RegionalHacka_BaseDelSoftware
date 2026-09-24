@@ -7,6 +7,7 @@ from components.case_form import NewCaseDialog
 from components.layout import PageLayout, Panel, guard_page
 from components.states import EmptyState
 from components.status_badge import StatusBadge
+from services.camera_monitor_service import monitor
 from services.cameras_service import get_cameras
 from services.cases_service import get_active_cases
 from services import live_recognition_service as live_service
@@ -115,6 +116,7 @@ def live_page():
                 actor = require('live.control')
                 device = None if dev_select.value == 'auto' else dev_select.value
                 await run.io_bound(inst.start, cam_select.value, device, actor)
+                monitor.paused_by = ''  # un arranque manual deshace una pausa previa del monitoreo continuo
                 ui.notify(f'{inst.name} iniciada: {inst.device_name or "dispositivo " + str(inst.camera_index)} '
                           f'→ {inst.camera_id}.', type='positive', position='bottom-right')
             except (LiveRecognitionError, PermissionError) as error:
@@ -129,8 +131,10 @@ def live_page():
             state[busy_key] = True
             try:
                 actor = require('live.control')
-                await run.io_bound(inst.stop, actor)
-                ui.notify(f'{inst.name} detenida ({inst.camera_id}).', type='info', position='bottom-right')
+                # Pausar es deliberado: el monitoreo continuo (main.py) no debe reabrir la
+                # cámara por su cuenta hasta que alguien la reanude desde aquí.
+                await run.io_bound(monitor.pause_stream, actor)
+                ui.notify('Monitoreo continuo de cámaras pausado.', type='info', position='bottom-right')
             except PermissionError as error:
                 ui.notify(str(error), type='warning', position='bottom-right')
             finally:
@@ -268,7 +272,8 @@ def live_page():
         def refresh():
             # Refresh Cam 1
             run_1 = live_1.running
-            status_1.set_text('INICIANDO…' if state['busy_1'] and not run_1 else live_1.status)
+            status_1.set_text('INICIANDO…' if state['busy_1'] and not run_1
+                              else 'PAUSADA' if monitor.paused_by and not run_1 else live_1.status)
             dot_1.classes(replace='status-dot ' + ('green' if run_1 else ''))
             info_1.set_text(f'{live_1.fps:.1f} fps · {len(live_1.faces)} rostro(s)' if run_1 else '')
             device_1.set_text(f'Dispositivo {live_1.camera_index} · {live_1.device_name or "sin nombre"} → {live_1.camera_id}'
@@ -282,7 +287,8 @@ def live_page():
 
             # Refresh Cam 2
             run_2 = live_2.running
-            status_2.set_text('INICIANDO…' if state['busy_2'] and not run_2 else live_2.status)
+            status_2.set_text('INICIANDO…' if state['busy_2'] and not run_2
+                              else 'PAUSADA' if monitor.paused_by and not run_2 else live_2.status)
             dot_2.classes(replace='status-dot ' + ('green' if run_2 else ''))
             info_2.set_text(f'{live_2.fps:.1f} fps · {len(live_2.faces)} rostro(s)' if run_2 else '')
             device_2.set_text(f'Dispositivo {live_2.camera_index} · {live_2.device_name or "sin nombre"} → {live_2.camera_id}'
