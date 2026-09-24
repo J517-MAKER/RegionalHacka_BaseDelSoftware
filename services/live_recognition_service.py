@@ -60,15 +60,16 @@ def draw_face(image, face):
 
 
 class LiveRecognition:
-    """One webcam per computer, shared by every open page. The interface polls its state."""
+    """Live camera recognition instance for a network camera."""
 
-    def __init__(self):
+    def __init__(self, camera_id=None, camera_index=None, name='Cámara 1'):
+        self.name = name
         self.running = False
         self.status = 'DETENIDA'
         self.error = None
         self.dark = False
-        self.camera_id = config.DEFAULT_CAMERA_ID
-        self.camera_index = config.CAMERA_INDEX
+        self.camera_id = camera_id or config.DEFAULT_CAMERA_ID
+        self.camera_index = config.CAMERA_INDEX if camera_index is None else camera_index
         self.actor = 'Sistema'
         self.fps = 0.0
         self.faces = []  # latest analysis, most prominent face first
@@ -91,22 +92,27 @@ class LiveRecognition:
         except face_engine.FaceEngineUnavailable as error:
             raise LiveRecognitionError(str(error)) from error
         import cv2
-        index = config.CAMERA_INDEX if camera_index is None else int(camera_index)
+        index = self.camera_index if camera_index is None else int(camera_index)
         # DirectShow opens in about a second on Windows; the default backend can take several.
         capture = cv2.VideoCapture(index, cv2.CAP_DSHOW if sys.platform == 'win32' else cv2.CAP_ANY)
+        if capture.isOpened():
+            capture.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
         if not capture.isOpened() or not capture.read()[0]:
             capture.release()
-            raise LiveRecognitionError('No fue posible abrir la cámara del equipo. Ciérrala en otras aplicaciones '
-                                       'y revisa Configuración > Privacidad y seguridad > Cámara.')
-        self.camera_id, self.camera_index, self.actor = camera_id or config.DEFAULT_CAMERA_ID, index, actor
+            raise LiveRecognitionError(f'No fue posible abrir el dispositivo {index}. '
+                                       'Verifica que esté conectado y no esté siendo usado por otra app.')
+        self.camera_id = camera_id or self.camera_id
+        self.camera_index = index
+        self.actor = actor
         self._capture = capture
         self._stop.clear()
         with self._lock:
             self._frame, self.faces = None, []
         self.error, self.dark, self.fps, self._gallery_at = None, False, 0.0, 0.0
         self.running, self.status = True, 'RECONOCIENDO'
-        self._threads = [threading.Thread(target=self._capture_loop, name='live-capture', daemon=True),
-                         threading.Thread(target=self._analysis_loop, name='live-recognition', daemon=True)]
+        self._threads = [threading.Thread(target=self._capture_loop, name=f'live-capture-{self.camera_id}', daemon=True),
+                         threading.Thread(target=self._analysis_loop, name=f'live-rec-{self.camera_id}', daemon=True)]
         for thread in self._threads:
             thread.start()
         store.audit(actor, 'Cámara', f'Inició el reconocimiento facial en vivo en {self.camera_id}',
@@ -136,6 +142,8 @@ class LiveRecognition:
         import cv2
         failures = 0
         while not self._stop.is_set():
+            if self._capture is None:
+                break
             ok, frame = self._capture.read()
             if not ok:
                 failures += 1
@@ -147,7 +155,7 @@ class LiveRecognition:
                 self.error, self.status = None, 'RECONOCIENDO'
             failures = 0
             with self._lock:
-                self._frame = cv2.flip(frame, 1)  # mirror view, as people expect from a webcam
+                self._frame = cv2.flip(frame, 1)  # mirror view
 
     def _analysis_loop(self):
         while not self._stop.is_set():
@@ -284,4 +292,32 @@ class LiveRecognition:
         return evidence.face_captures
 
 
-live = LiveRecognition()
+# Instantiate dual live cameras for simultaneous multi-camera support
+live_1 = LiveRecognition(config.DEFAULT_CAMERA_ID, config.CAMERA_INDEX, name='Cámara 1')
+live_2 = LiveRecognition(config.SECOND_CAMERA_ID, config.CAMERA_INDEX_2, name='Cámara 2')
+
+# Default alias for backwards compatibility
+live = live_1
+
+LIVE_INSTANCES = [live_1, live_2]
+
+
+def get_live_for_camera(camera_id):
+    """Returns the LiveRecognition instance managing camera_id, if any."""
+    for inst in LIVE_INSTANCES:
+        if inst.camera_id == camera_id:
+            return inst
+    return None
+
+
+def is_live_camera(camera_id):
+    """Returns True if the camera is one of the local equipment live cameras."""
+    return get_live_for_camera(camera_id) is not None
+
+
+def stop_all(actor=None):
+    """Stops all active live recognition cameras."""
+    for inst in LIVE_INSTANCES:
+        if inst.running:
+            inst.stop(actor)
+

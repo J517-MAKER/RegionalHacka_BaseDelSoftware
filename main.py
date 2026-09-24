@@ -20,7 +20,7 @@ app.add_static_files('/imports',str(config.IMPORT_DIR))
 
 from pages import (monitor,cases,import_alert,case_detail,cameras,live,matches,tracking,alerts,voice,  # noqa: E402,F401
                    history,users,settings,supervision)  # noqa: E402,F401
-from services.live_recognition_service import live as live_recognition  # noqa: E402
+from services.live_recognition_service import live as live_recognition, stop_all  # noqa: E402
 
 
 async def expire_voice_transcripts():
@@ -36,7 +36,7 @@ def start_voice_retention():
 
 if not app.is_started:  # the interface tests re-execute this module
     app.on_startup(start_voice_retention)
-    app.on_shutdown(live_recognition.stop)  # release the webcam when the server stops
+    app.on_shutdown(stop_all)  # release all webcams when the server stops
 
 
 @ui.page('/')
