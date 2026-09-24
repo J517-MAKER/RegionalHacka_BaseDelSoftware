@@ -9,32 +9,44 @@ from components.states import EmptyState
 from components.status_badge import StatusBadge
 from services.cameras_service import get_cameras
 from services.cases_service import get_active_cases
+from services import live_recognition_service as live_service
 from services.live_recognition_service import (
-    LiveRecognitionError, live, live_1, live_2, LIVE_INSTANCES,
-    get_live_for_camera, is_live_camera
+    KIND_LABELS, LiveRecognitionError, find_device, get_live_for_camera, live_1, live_2
 )
 from services.users_service import can, require
 
 LEGEND = [('#4caf50', 'ALTA'), ('#ffc800', 'MEDIA'), ('#ff8c00', 'BAJA'), ('#aaaaaa', 'Sin coincidencia')]
-DEVICES = {
-    0: 'Dispositivo 0 · Cámara de laptop / integrada',
-    1: 'Dispositivo 1 · Webcam USB externa',
-    2: 'Dispositivo 2 · Otra fuente de video'
-}
+SLOTS = {'1': live_1, '2': live_2}
+
+
+def device_options(inst, devices):
+    """'auto' finds this slot's physical camera by name; the rest pin a device by index."""
+    found = find_device(inst.kind, devices=devices)
+    auto = f'Automático · {found["name"]}' if found else f'Automático · {KIND_LABELS[inst.kind].lower()} no detectada'
+    options = {'auto': auto}
+    for device in devices:
+        options[device['index']] = f'{device["index"]} · {device["name"]} ({KIND_LABELS[device["kind"]]})'
+    return options
+
+
+def frame_response(inst):
+    content = inst.frame_jpeg() if inst else None
+    if content is None:
+        return Response(status_code=404)
+    return Response(content=content, media_type='image/jpeg', headers={'Cache-Control': 'no-store'})
+
+
+@app.get('/live/slot/{slot}.jpg')
+def live_slot_frame(slot: str):
+    """Newest frame of one physical camera slot: each panel reads only its own device."""
+    return frame_response(SLOTS.get(slot))
 
 
 @app.get('/live/frame.jpg')
 @app.get('/live/frame/{camera_id}.jpg')
-@app.get('/live/frame/{camera_id}')
 def live_frame(camera_id: str = None):
-    """Newest annotated frame for requested camera."""
-    inst = get_live_for_camera(camera_id) if camera_id else live_1
-    if not inst:
-        inst = live_1
-    content = inst.frame_jpeg()
-    if content is None:
-        return Response(status_code=404)
-    return Response(content=content, media_type='image/jpeg', headers={'Cache-Control': 'no-store'})
+    """Newest frame of the network camera; 404 when no slot runs on it (never another camera's)."""
+    return frame_response(get_live_for_camera(camera_id) if camera_id else live_1)
 
 
 def clean(name):
@@ -48,7 +60,8 @@ def live_page():
     with PageLayout('/live', 'Reconocimiento facial en vivo',
                     'Uso simultáneo de la cámara de la laptop y la webcam USB externa contra las personas en búsqueda.'):
         
-        state = {'busy_1': False, 'busy_2': False, 'seen': set(), 'gallery': None}
+        state = {'busy_1': False, 'busy_2': False, 'seen': set(), 'gallery': None,
+                 'devices': live_service.list_video_devices()}
 
         @ui.refreshable
         def gallery():
@@ -100,9 +113,10 @@ def live_page():
             refresh()
             try:
                 actor = require('live.control')
-                await run.io_bound(inst.start, cam_select.value, dev_select.value, actor)
-                ui.notify(f'{inst.name} iniciada ({cam_select.value} · Disp. {dev_select.value}).',
-                          type='positive', position='bottom-right')
+                device = None if dev_select.value == 'auto' else dev_select.value
+                await run.io_bound(inst.start, cam_select.value, device, actor)
+                ui.notify(f'{inst.name} iniciada: {inst.device_name or "dispositivo " + str(inst.camera_index)} '
+                          f'→ {inst.camera_id}.', type='positive', position='bottom-right')
             except (LiveRecognitionError, PermissionError) as error:
                 ui.notify(str(error), type='warning', position='bottom-right')
             finally:
@@ -122,6 +136,22 @@ def live_page():
             finally:
                 state[busy_key] = False
                 refresh()
+
+        async def detect_devices():
+            state['devices'] = await run.io_bound(live_service.list_video_devices)
+            for inst, select in ((live_1, dev_1), (live_2, dev_2)):
+                select.set_options(device_options(inst, state['devices']),
+                                   value=select.value if select.value in [d['index'] for d in state['devices']] else 'auto')
+            detected.refresh()
+            ui.notify(f'{len(state["devices"])} dispositivo(s) de video detectado(s).', position='bottom-right')
+
+        @ui.refreshable
+        def detected():
+            physical = [d for d in state['devices'] if d['kind'] != 'virtual']
+            if not physical:
+                ui.label('No se detectaron cámaras físicas.').classes('text-[11px] muted')
+            for d in physical:
+                ui.label(f'● {KIND_LABELS[d["kind"]]}: {d["name"]} (dispositivo {d["index"]})').classes('text-[11px]')
 
         async def start_all():
             await start_cam(live_1, cam_1, dev_1, 'busy_1')
@@ -152,6 +182,10 @@ def live_page():
                             .props('unelevated no-caps size=sm color=primary')
                         ui.button('DETENER AMBAS', icon='stop', on_click=stop_all_cams) \
                             .props('outline no-caps size=sm')
+                        ui.button('Detectar cámaras', icon='search', on_click=detect_devices) \
+                            .props('flat no-caps size=sm').mark('live-detect')
+                with ui.column().classes('w-full gap-0 px-1'):
+                    detected()
 
                 # Dual Camera Columns
                 with ui.element('div').style('display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:16px; width:100%;'):
@@ -169,17 +203,18 @@ def live_page():
                                     dot_1 = ui.element('span').classes('status-dot')
                                     status_1 = ui.label('DETENIDA').classes('text-sm font-semibold')
                                 info_1 = ui.label('').classes('text-[11px] text-gray-500')
+                            device_1 = ui.label('').classes('text-[11px] text-gray-500')
                             cam_1 = ui.select({c.id: f'{c.id} — {c.name}' for c in get_cameras() if c.status != 'Desconectada'},
                                               value=live_1.camera_id, label='Cámara de red').props('outlined dense').classes('w-full')
-                            dev_1 = ui.select(DEVICES, value=live_1.camera_index if live_1.camera_index in DEVICES else 0,
-                                              label='Hardware').props('outlined dense').classes('w-full')
+                            dev_1 = ui.select(device_options(live_1, state['devices']), value='auto',
+                                              label='Dispositivo físico').props('outlined dense').classes('w-full')
                             with ui.row().classes('w-full gap-2'):
                                 start_btn_1 = ui.button('INICIAR', icon='videocam', on_click=lambda: start_cam(live_1, cam_1, dev_1, 'busy_1')) \
-                                    .props('unelevated no-caps').classes('flex-1')
+                                    .props('unelevated no-caps').classes('flex-1').mark('live-start')
                                 stop_btn_1 = ui.button('DETENER', icon='stop', on_click=lambda: stop_cam(live_1, 'busy_1')) \
-                                    .props('outline no-caps').classes('flex-1')
+                                    .props('outline no-caps').classes('flex-1').mark('live-stop')
                             ui.button('Registrar persona con esta cámara', icon='person_add', on_click=lambda: register_from(live_1)) \
-                                .props('flat dense no-caps').classes('w-full text-xs')
+                                .props('flat dense no-caps').classes('w-full text-xs').mark('live-register')
 
                     # ── Panel Cámara 2 (Webcam USB) ──
                     with Panel('02 / Cámara 2 · Webcam USB', f'RED: {live_2.camera_id}'):
@@ -194,10 +229,11 @@ def live_page():
                                     dot_2 = ui.element('span').classes('status-dot')
                                     status_2 = ui.label('DETENIDA').classes('text-sm font-semibold')
                                 info_2 = ui.label('').classes('text-[11px] text-gray-500')
+                            device_2 = ui.label('').classes('text-[11px] text-gray-500')
                             cam_2 = ui.select({c.id: f'{c.id} — {c.name}' for c in get_cameras() if c.status != 'Desconectada'},
                                               value=live_2.camera_id, label='Cámara de red').props('outlined dense').classes('w-full')
-                            dev_2 = ui.select(DEVICES, value=live_2.camera_index if live_2.camera_index in DEVICES else 1,
-                                              label='Hardware').props('outlined dense').classes('w-full')
+                            dev_2 = ui.select(device_options(live_2, state['devices']), value='auto',
+                                              label='Dispositivo físico').props('outlined dense').classes('w-full')
                             with ui.row().classes('w-full gap-2'):
                                 start_btn_2 = ui.button('INICIAR', icon='videocam', on_click=lambda: start_cam(live_2, cam_2, dev_2, 'busy_2')) \
                                     .props('unelevated no-caps').classes('flex-1')
@@ -235,6 +271,8 @@ def live_page():
             status_1.set_text('INICIANDO…' if state['busy_1'] and not run_1 else live_1.status)
             dot_1.classes(replace='status-dot ' + ('green' if run_1 else ''))
             info_1.set_text(f'{live_1.fps:.1f} fps · {len(live_1.faces)} rostro(s)' if run_1 else '')
+            device_1.set_text(f'Dispositivo {live_1.camera_index} · {live_1.device_name or "sin nombre"} → {live_1.camera_id}'
+                                if run_1 else '')
             video_1.set_visibility(run_1)
             idle_1.set_visibility(not run_1)
             start_btn_1.set_enabled(not run_1 and not state['busy_1'] and can('live.control'))
@@ -247,6 +285,8 @@ def live_page():
             status_2.set_text('INICIANDO…' if state['busy_2'] and not run_2 else live_2.status)
             dot_2.classes(replace='status-dot ' + ('green' if run_2 else ''))
             info_2.set_text(f'{live_2.fps:.1f} fps · {len(live_2.faces)} rostro(s)' if run_2 else '')
+            device_2.set_text(f'Dispositivo {live_2.camera_index} · {live_2.device_name or "sin nombre"} → {live_2.camera_id}'
+                                if run_2 else '')
             video_2.set_visibility(run_2)
             idle_2.set_visibility(not run_2)
             start_btn_2.set_enabled(not run_2 and not state['busy_2'] and can('live.control'))
@@ -259,8 +299,8 @@ def live_page():
             new = [item for item in all_dets if item['detection'].id not in state['seen']]
             for item in new:
                 state['seen'].add(item['detection'].id)
-                ui.notify(f'Coincidencia [{item["detection"].camera_id}]: {item["detection"].case_id} · {clean(item["name"])} '
-                          f'({item["detection"].similarity} %)', type='warning', position='top-right', timeout=6000)
+                ui.notify(f'Posible coincidencia: {item["detection"].case_id} · {clean(item["name"])} '
+                          f'({item["detection"].similarity} %) en {item["detection"].camera_id}',type='warning', position='top-right', timeout=6000)
             if new:
                 detections.refresh()
 
@@ -271,9 +311,9 @@ def live_page():
 
         def next_frame():
             if live_1.running:
-                video_1.set_source(f'/live/frame/{live_1.camera_id}.jpg?{time.time()}')
+                video_1.set_source(f'/live/slot/1.jpg?{time.time()}')
             if live_2.running:
-                video_2.set_source(f'/live/frame/{live_2.camera_id}.jpg?{time.time()}')
+                video_2.set_source(f'/live/slot/2.jpg?{time.time()}')
 
         refresh()
         ui.timer(.5, refresh)

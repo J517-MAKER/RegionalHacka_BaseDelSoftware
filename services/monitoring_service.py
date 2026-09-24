@@ -148,8 +148,9 @@ class MonitoringSession:
         clip, clip_start, clip_end, faces = None, start, end, []
         if risk.should_create_alert:
             # Who is in view right now, before waiting for the seconds after the request.
-            from services.live_recognition_service import live
-            faces = live.snapshot_faces(self.camera_id)
+            from services.live_recognition_service import running_for_camera
+            inst = running_for_camera(self.camera_id)
+            faces = inst.snapshot_faces(self.camera_id) if inst else []
             # Keep the seconds before and after the possible request for help.
             self.status = 'CONSERVANDO EVIDENCIA'
             clip_start = max(0, start - int(config.EVIDENCE_PRE_SECONDS * rate))

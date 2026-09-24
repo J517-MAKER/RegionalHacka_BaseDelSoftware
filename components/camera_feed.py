@@ -17,7 +17,7 @@ def LiveStage(camera):
             badge = ui.label('● EN VIVO').style('background:#c62828;padding:2px 6px;border-radius:4px')
         with ui.element('div').classes('camera-bottom'):
             inst = get_live_for_camera(camera.id)
-            tag = f'CÁMARA DEL EQUIPO ({inst.name})' if inst else 'CÁMARA DEL EQUIPO'
+            tag = f'{inst.name} · {inst.device_name}' if inst and inst.device_name else inst.name if inst else 'CÁMARA DEL EQUIPO'
             ui.label(tag)
             ui.icon('volume_up' if camera.audio else 'volume_off', size='13px')
 

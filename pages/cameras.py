@@ -6,7 +6,7 @@ from components.status_badge import StatusBadge
 from components.person_profile import InfoPair
 from components.states import EmptyState
 from services.cameras_service import get_cameras, get_camera, get_nearby_cameras, get_camera_events
-from services.live_recognition_service import live, is_live_camera, get_live_for_camera
+from services.live_recognition_service import is_live_camera, get_live_for_camera
 import config
 
 
@@ -36,7 +36,8 @@ def cameras_page(camera_id: str = ''):
                     for label, value in [('Nombre', camera.name), ('Ubicación', camera.location), ('Última comunicación', camera.last_seen), ('Audio', audio)]:
                         InfoPair(label, value)
                     if own and live_inst:
-                        InfoPair('Video', f'Cámara del equipo ({live_inst.name}) · ' + ('en vivo' if live_inst.running else 'detenida'))
+                        InfoPair('Video', f'{live_inst.name}' + (f' · {live_inst.device_name}' if live_inst.device_name else '')
+                                           + ' · ' + ('en vivo' if live_inst.running else 'detenida'))
                         ui.button('Abrir reconocimiento en vivo', icon='face', on_click=lambda: ui.navigate.to('/live')).props('unelevated no-caps')
                     if camera.status == 'Desconectada':
                         ui.label('Conexión perdida. No fue posible conectar con la cámara.').classes('notice')

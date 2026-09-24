@@ -15,3 +15,5 @@ pgvector>=0.2,<1
 # Reconocimiento facial. Los modelos preentrenados (buffalo_l) son de uso no comercial.
 insightface>=2.0,<3
 onnxruntime>=1.17,<2
+# Nombres de las cámaras en Windows (laptop vs. webcam USB) en el mismo orden que OpenCV/DirectShow.
+pygrabber>=0.2,<1; sys_platform == 'win32'
