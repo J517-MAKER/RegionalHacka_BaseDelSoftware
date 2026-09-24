@@ -4,6 +4,10 @@ Frontend institucional de demostración para operadores y autoridades. Desarroll
 
 ## Arranque rápido (Windows, sin Docker)
 
+Doble clic en **`Iniciar NEXO.bat`**, en la carpeta del proyecto (si Windows dice «Windows
+protegió su PC»: *Más información* → *Ejecutar de todas formas*). No cierres la ventana que se
+abre mientras uses NEXO: cerrarla lo apaga. Es lo mismo que ejecutar en PowerShell:
+
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\iniciar.ps1
 ```
