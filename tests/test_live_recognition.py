@@ -235,6 +235,46 @@ class LiveRecognitionTest(unittest.TestCase):
         self.live.running = False
 
 
+class SessionDevicesTest(unittest.TestCase):
+    """Cambiar de perfil es un relevo: el puesto nuevo no hereda los dispositivos del anterior."""
+
+    def setUp(self):
+        from services.camera_monitor_service import monitor
+        self.monitor = monitor
+        self.role = monitor.role
+        self.audio = monitor._audio
+        self.logs = store.logs[:]
+
+    def tearDown(self):
+        self.monitor.role, self.monitor._audio = self.role, self.audio
+        store.logs[:] = self.logs
+
+    def test_administrator_releases_camera_and_continuous_listening(self):
+        from services.camera_monitor_service import monitor
+        stopped = []
+        listening = SimpleNamespace(running=True, stop=lambda: stopped.append('microfono'))
+        monitor._audio = listening
+        instance = SimpleNamespace(running=True)
+        with patch('services.live_recognition_service.LIVE_INSTANCES', [instance]),                 patch('services.live_recognition_service.stop_all',
+                      lambda actor=None: stopped.append('camaras')):
+            released = monitor.apply_role('Administrador', 'Admin01')
+        self.assertEqual(sorted(stopped), ['camaras', 'microfono'])
+        self.assertEqual(len(released), 2)
+        # Y el monitoreo continuo tampoco vuelve a abrirlos por su cuenta.
+        self.assertFalse(monitor.allows('camera'))
+        self.assertFalse(monitor.allows('microphone'))
+        self.assertFalse(monitor.ensure_live_stream())
+        self.assertFalse(monitor.ensure_audio_stream())
+        self.assertEqual(store.logs[0].result, 'LIBERADO')
+
+    def test_operator_keeps_its_own_devices(self):
+        from services.camera_monitor_service import monitor
+        monitor._audio = None
+        released = monitor.apply_role('Operador', 'Operador01')
+        self.assertEqual(released, [])
+        self.assertTrue(monitor.allows('camera') and monitor.allows('microphone'))
+
+
 class LivePageTest(unittest.IsolatedAsyncioTestCase):
     async def wait_for(self, condition, seconds=6):
         deadline = time.monotonic() + seconds

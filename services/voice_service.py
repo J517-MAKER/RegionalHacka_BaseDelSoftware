@@ -250,8 +250,13 @@ class MicrophoneCapture:
         import numpy as np
         audio = np.concatenate(self.chunks)
         self.chunks = []
-        if float(np.max(np.abs(audio))) < 0.0001:
+        peak = float(np.max(np.abs(audio)))
+        if peak < 0.0001:
             raise VoiceError('No se detectó voz en la grabación.')
+        # Los micrófonos de laptop graban bajo y el reconocedor confunde las palabras flojas.
+        # Se sube el nivel hasta un pico común, sin recortar: no cambia lo dicho, sólo su volumen.
+        if peak < 0.5:
+            audio = audio * (0.85 / peak)
         return audio
 
 
@@ -271,19 +276,34 @@ def model_cached():
     return any(Path(cache).glob(f'models--Systran--faster-whisper-{config.VOICE_MODEL}/snapshots/*/model.bin'))
 
 
-def transcribe_audio(audio):
+def transcribe_audio(audio, prompt=None, beam_size=1):
+    """Transcribe un fragmento en español.
+
+    `prompt` es vocabulario de contexto: el reconocedor tiende a escribir palabras comunes en
+    lugar de las del dominio («folio», «coincidencias», «CAM-008»), y nombrárselas antes reduce
+    esas confusiones. `beam_size` mayor explora más alternativas: cuesta tiempo, así que sólo lo
+    usa el asistente, que transcribe una frase corta y no un flujo continuo.
+    """
     global _model
     with _model_lock:
         if _model is None:
             try:
-                if config.VOICE_MODEL not in ('tiny', 'base', 'small'):
+                if config.VOICE_MODEL not in ('tiny', 'base', 'small', 'medium'):
                     raise ValueError('Modelo no permitido')
                 from faster_whisper import WhisperModel
                 _model = WhisperModel(config.VOICE_MODEL, device='cpu', compute_type='int8')
             except Exception as exc:
                 raise VoiceError('No fue posible cargar el modelo de reconocimiento. Puedes usar la pestaña Pruebas.') from exc
         try:
-            segments, info = _model.transcribe(audio, language=config.VOICE_LANGUAGE, beam_size=1, vad_filter=True)
+            segments, info = _model.transcribe(
+                audio, language=config.VOICE_LANGUAGE, beam_size=beam_size, vad_filter=True,
+                # Sin esto una ventana arrastra el texto de la anterior y repite frases.
+                condition_on_previous_text=False,
+                initial_prompt=prompt,
+                # Se reintenta con más temperatura cuando la primera pasada sale incoherente.
+                temperature=[0.0, 0.2, 0.4],
+                # El recorte por defecto se come el arranque y el final de cada frase.
+                vad_parameters={'min_silence_duration_ms': 300, 'speech_pad_ms': 300})
             segments = list(segments)
             text = ' '.join(s.text.strip() for s in segments).strip()
             if not text:

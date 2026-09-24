@@ -21,6 +21,16 @@ from services import store
 from services.video_ring import VideoRing  # noqa: F401  (se reexporta: otros módulos lo importan de aquí)
 
 
+# Dispositivos que corresponden a cada puesto. Cambiar de perfil no es cambiar de pestaña:
+# el operador vigila (cámaras del equipo y escucha continua de auxilio), el supervisor sólo
+# revisa lo ya registrado y el administrador no vigila nada —su micrófono queda libre para el
+# asistente de voz, que graba sólo mientras se mantiene pulsado y nunca conserva el audio.
+ROLE_DEVICES = {'Operador': {'camera', 'microphone'},
+                'Supervisor': set(),
+                'Administrador': set()}
+DEFAULT_ROLE = 'Operador'
+
+
 def autostart_enabled():
     """La cámara del equipo se enciende sola con el servidor.
 
@@ -153,6 +163,9 @@ class CameraMonitor:
         self.audio_error = ''
         self._audio = None
         self._last_audio_attempt = 0.0
+        # Rol de la sesión de demostración en curso: decide qué dispositivos puede abrir el
+        # monitoreo continuo. Ver ROLE_DEVICES y apply_role().
+        self.role = DEFAULT_ROLE
 
     def adapter(self, camera_id):
         """La fuente de una cámara.
@@ -232,7 +245,7 @@ class CameraMonitor:
         duplica esa lógica: sólo se decide cuándo arrancar.
         """
         from services.live_recognition_service import LIVE_INSTANCES
-        if not autostart_enabled() or self.paused_by:
+        if not autostart_enabled() or self.paused_by or not self.allows('camera'):
             return False
         # Una cámara pausada a mano desde la página en vivo se respeta hasta que la inicien.
         pending = [inst for inst in LIVE_INSTANCES if not inst.running and not inst.paused_by]
@@ -252,6 +265,34 @@ class CameraMonitor:
                 problems.append(f'{instance.name}: {error}')
         self.stream_error = ' · '.join(problems)
         return started
+
+    # ------------------------------------------------------- dispositivos según el puesto
+    def allows(self, device):
+        return device in ROLE_DEVICES.get(self.role, ROLE_DEVICES[DEFAULT_ROLE])
+
+    def apply_role(self, role, actor='Sistema'):
+        """Deja abiertos sólo los dispositivos del puesto que acaba de tomar la sesión.
+
+        Sin esto, lo que encendió el rol anterior seguía corriendo: al pasar de operador a
+        administrador la cámara y la escucha continua quedaban abiertas en una pantalla que
+        ni siquiera las muestra. La liberación es inmediata y el bucle continuo tampoco las
+        reabre, porque consulta este mismo permiso.
+        """
+        from services.live_recognition_service import LIVE_INSTANCES, stop_all
+        self.role = role
+        # Al volver a un puesto que sí vigila, la espera entre reintentos no debe retrasarlo.
+        self._last_attempt = self._last_audio_attempt = 0.0
+        released = []
+        if not self.allows('camera') and any(inst.running for inst in LIVE_INSTANCES):
+            stop_all(actor)
+            released.append('cámaras del equipo')
+        if not self.allows('microphone') and self._audio is not None and self._audio.running:
+            self._audio.stop()
+            released.append('escucha continua de auxilio')
+        if released:
+            store.audit(actor, 'Sesión', f'Cambio a {role}: se liberó ' + ' y '.join(released) + '.',
+                        camera_id=config.DEFAULT_CAMERA_ID, result='LIBERADO')
+        return released
 
     def pause_stream(self, actor='Sistema'):
         """Pausa deliberada. Las cámaras quedan libres y el monitoreo no las reabre solo."""
@@ -292,7 +333,7 @@ class CameraMonitor:
 
     def ensure_audio_stream(self):
         """Arranca la detección de auxilio sin que nadie la pida."""
-        if not autostart_enabled() or self.audio_paused_by:
+        if not autostart_enabled() or self.audio_paused_by or not self.allows('microphone'):
             return False
         session = self.audio_session()
         if session.running:
