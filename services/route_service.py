@@ -236,11 +236,15 @@ def case_route(case_id):
     if case is None:
         return None
     observations = []
+    # Detecciones de la ficha: las vigentes ya están en el mapa y las descartadas no vuelven por
+    # el candidato que BUSCAR creó de ellas.
     detection_ids = set()
     for detection in store.detections:
-        if detection.case_id != case_id or detection.status in DISCARDED:
+        if detection.case_id != case_id:
             continue
         detection_ids.add(detection.id)
+        if detection.status in DISCARDED:
+            continue
         observations.append(_observation(
             detection.camera_id, detection.timestamp,
             'VALIDADA' if detection.status in VALIDATED_DETECTION else 'POSIBLE', 'DETECCION',

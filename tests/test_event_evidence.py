@@ -142,6 +142,52 @@ class EventEvidenceTest(unittest.TestCase):
         extra = evidence.extra_videos[0]
         self.assertTrue(verify_video_integrity(evidence, extra['file'], extra['integrity_hash']))
 
+    def test_a_live_slot_bound_to_a_network_camera_keeps_its_video(self):
+        # En /live se puede asignar a la cámara del equipo cualquier cámara de la red. Aunque en
+        # la red figure como simulada, lo que transmite es real y su video debe conservarse.
+        network = next(c.id for c in store.cameras if c.stream_source == 'simulated')
+        fill_ring(live_1, network, time.monotonic())
+        self.shout()
+        evidence = store.evidence[0]
+        self.assertEqual(evidence.video_status, 'ATTACHED')
+        self.assertEqual(evidence.video_camera_id, network)
+        frames = [f for f in store.event_frames if f.event_id == evidence.event_id]
+        self.assertTrue(frames and all(f.image_path for f in frames))
+
+    def test_each_listening_session_has_its_own_stop_signal(self):
+        # Pausar y reanudar mientras la primera transcripción sigue en curso (la primera vez se
+        # descarga el modelo de voz): el análisis anterior no debe revivir junto al nuevo.
+        from types import SimpleNamespace
+        stream = SimpleNamespace(start=lambda: None, stop=lambda: None, close=lambda: None)
+        session = MonitoringSession(camera_id=config.DEFAULT_CAMERA_ID, actor='Operador01')
+        with patch('sounddevice.InputStream', return_value=stream), patch('services.voice_service.warm_up'):
+            session.start()
+            first = session._stop
+            session.stop()
+            session.start()
+            try:
+                self.assertIsNot(session._stop, first)
+                self.assertTrue(first.is_set())
+                self.assertFalse(session._stop.is_set())
+            finally:
+                session.stop()
+
+    def test_a_late_analysis_keeps_its_event_but_not_the_new_session_audio(self):
+        import threading
+        session = MonitoringSession(camera_id=config.DEFAULT_CAMERA_ID, actor='Operador01')
+        previous = threading.Event()
+        previous.set()  # la sesión de ese análisis ya terminó; la escucha actual es otra
+        session.status = 'ESCUCHANDO'
+        session.ring.write(tone(self.RECORDED))
+        segments = [{'text': 'por favor déjame, necesito ayuda', 'start': 1.0, 'end': 3.0}]
+        with patch('services.monitoring_service.transcribe_window',
+                   return_value=(segments[0]['text'], {'segments': segments})):
+            session._analyze(self.WINDOW_START * RATE, (self.WINDOW_START + 6) * RATE, -1.0, previous)
+        self.assertEqual(store.evidence, self.snapshot[3])  # sin clip con audio de otra sesión
+        self.assertTrue(any(v.text_original == segments[0]['text'] for v in store.voice_events))  # el evento sí
+        session._loop(previous)
+        self.assertEqual(session.status, 'ESCUCHANDO')  # el rezagado no apaga la escucha actual
+
     def test_without_any_live_camera_the_video_is_declared_pending(self):
         self.shout()
         evidence = store.evidence[0]

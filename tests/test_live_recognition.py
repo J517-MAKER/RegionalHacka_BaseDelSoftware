@@ -2,6 +2,7 @@
 import asyncio
 import os
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -161,6 +162,62 @@ class LiveRecognitionTest(unittest.TestCase):
                 self.live.start()
         self.assertTrue(closed.released)
         self.assertFalse(self.live.running)
+
+    def test_two_simultaneous_starts_open_the_camera_once(self):
+        # El monitoreo continuo reintenta y el botón REANUDAR arranca: pueden coincidir.
+        opened = []
+
+        def slow_start(camera_id, camera_index, actor):
+            opened.append(actor)
+            time.sleep(.2)
+            self.live.running = True
+
+        with patch.object(self.live, '_start', side_effect=slow_start):
+            callers = [threading.Thread(target=self.live.start, kwargs={'actor': actor})
+                       for actor in ('Sistema · monitoreo continuo', 'Operador01')]
+            for caller in callers:
+                caller.start()
+            for caller in callers:
+                caller.join()
+        self.assertEqual(len(opened), 1)
+        self.live.running = False
+
+    def test_each_session_has_its_own_stop_signal(self):
+        # Un hilo de la sesión anterior que tardó en salir (p. ej. descargando el modelo) no
+        # debe revivir cuando la cámara se reanuda.
+        with patch.object(face_engine, 'load'), patch.object(face_engine, 'analyze', return_value=[]), \
+                patch('cv2.VideoCapture', side_effect=lambda *args: FakeCamera()):
+            self.live.start('CAM-003', 0, 'Operador01')
+            first = self.live._stop
+            self.live.stop('Operador01')
+            self.live.start('CAM-003', 0, 'Operador01')
+            self.assertIsNot(self.live._stop, first)
+            self.assertTrue(first.is_set())
+            self.assertFalse(self.live._stop.is_set())
+            self.live.stop('Operador01')
+
+    def test_a_damaged_frame_does_not_freeze_the_stream(self):
+        class Flaky(FakeCamera):
+            reads = 0
+
+            def read(self):
+                self.reads += 1
+                if self.reads == 3:  # la primera lectura es la de prueba al abrir
+                    raise RuntimeError('cuadro dañado')
+                return super().read()
+
+        camera = Flaky()
+        with patch.object(face_engine, 'load'), patch.object(face_engine, 'analyze', return_value=[]), \
+                patch('cv2.VideoCapture', return_value=camera):
+            self.live.start('CAM-003', 0, 'Operador01')
+            deadline = time.monotonic() + 5
+            while camera.reads < 12 and time.monotonic() < deadline:
+                time.sleep(.05)
+            self.assertTrue(self.live.running)
+            self.assertIsNotNone(self.live.frame_jpeg())
+            self.live.stop('Operador01')
+        self.assertGreaterEqual(camera.reads, 12)
+        self.assertTrue(camera.released)
 
     def test_faces_in_view_are_linked_to_a_request_for_help(self):
         self.live.running, self.live.camera_id, self.live._frame = True, 'CAM-008', self.frame

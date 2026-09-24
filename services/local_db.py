@@ -267,45 +267,58 @@ class LocalDatabase:
 
     # --------------------------------------------------------------- guardado
     def save(self):
-        """Guarda sólo lo que cambió desde la última vez; reordena sin reescribir contenido."""
+        """Guarda sólo lo que cambió desde la última vez; reordena sin reescribir contenido.
+
+        Lo que se da por guardado (huellas, orden, bitácora) se actualiza en memoria sólo después
+        de confirmar la transacción. Si algo falla —archivo bloqueado, disco lleno—, SQLite
+        deshace todo y el siguiente ciclo vuelve a intentar exactamente lo mismo.
+        """
         if not self.loaded:
             return 0
         written = 0
-        with self._lock, self.session() as connection:
-            for collection in collections():
-                items = collection.items()
-                keys = []
-                for item in items:
-                    key = str(getattr(item, collection.key))
-                    keys.append(key)
-                    data = collection.encode(item)
-                    digest = hashlib.sha1(data.encode('utf-8')).hexdigest()
-                    if self._saved.get((collection.name, key)) == digest:
-                        continue
-                    connection.execute(
-                        'INSERT INTO documentos (coleccion, clave, datos, huella, posicion, actualizado) '
-                        "VALUES (?, ?, ?, ?, ?, datetime('now', 'localtime')) "
-                        'ON CONFLICT (coleccion, clave) DO UPDATE SET datos = excluded.datos, '
-                        'huella = excluded.huella, actualizado = excluded.actualizado',
-                        (collection.name, key, data, digest, len(keys) - 1))
-                    self._saved[(collection.name, key)] = digest
-                    written += 1
-                order = tuple(keys)
-                if order != self._order.get(collection.name):
-                    connection.executemany('UPDATE documentos SET posicion = ? WHERE coleccion = ? AND clave = ?',
-                                           [(index, collection.name, key) for index, key in enumerate(keys)])
-                    gone = set(self._order.get(collection.name, ())) - set(keys)
-                    for key in gone:  # lo que la aplicación descartó (importación cancelada, voz caducada)
-                        connection.execute('DELETE FROM documentos WHERE coleccion = ? AND clave = ?',
-                                           (collection.name, key))
-                        self._saved.pop((collection.name, key), None)
-                    self._order[collection.name] = order
-            written += self._save_settings(connection)
-            written += self._save_logs(connection)
+        saved, removed, orders, log_keys = {}, set(), {}, set()
+        with self._lock:
+            with self.session() as connection:
+                for collection in collections():
+                    items = collection.items()
+                    keys = []
+                    for item in items:
+                        key = str(getattr(item, collection.key))
+                        keys.append(key)
+                        data = collection.encode(item)
+                        digest = hashlib.sha1(data.encode('utf-8')).hexdigest()
+                        if self._saved.get((collection.name, key)) == digest:
+                            continue
+                        connection.execute(
+                            'INSERT INTO documentos (coleccion, clave, datos, huella, posicion, actualizado) '
+                            "VALUES (?, ?, ?, ?, ?, datetime('now', 'localtime')) "
+                            'ON CONFLICT (coleccion, clave) DO UPDATE SET datos = excluded.datos, '
+                            'huella = excluded.huella, actualizado = excluded.actualizado',
+                            (collection.name, key, data, digest, len(keys) - 1))
+                        saved[(collection.name, key)] = digest
+                        written += 1
+                    order = tuple(keys)
+                    if order != self._order.get(collection.name):
+                        connection.executemany('UPDATE documentos SET posicion = ? WHERE coleccion = ? AND clave = ?',
+                                               [(index, collection.name, key) for index, key in enumerate(keys)])
+                        gone = set(self._order.get(collection.name, ())) - set(keys)
+                        for key in gone:  # lo que la aplicación descartó (importación cancelada, voz caducada)
+                            connection.execute('DELETE FROM documentos WHERE coleccion = ? AND clave = ?',
+                                               (collection.name, key))
+                            removed.add((collection.name, key))
+                        orders[collection.name] = order
+                written += self._save_settings(connection, saved)
+                written += self._save_logs(connection, log_keys)
+            # Confirmado en disco: ahora sí queda registrado como guardado.
+            for entry in removed:
+                self._saved.pop(entry, None)
+            self._saved.update(saved)
+            self._order.update(orders)
+            self._log_keys |= log_keys
         self.last_save, self.status, self.error = store.now(), 'LISTA', None
         return written
 
-    def _save_settings(self, connection):
+    def _save_settings(self, connection, saved):
         data = json.dumps({'settings': store.settings, 'phrases': store.phrases}, ensure_ascii=False, sort_keys=True)
         digest = hashlib.sha1(data.encode('utf-8')).hexdigest()
         if self._saved.get(('configuracion', 'preferencias')) == digest:
@@ -313,16 +326,16 @@ class LocalDatabase:
         connection.execute("INSERT INTO documentos (coleccion, clave, datos, huella) VALUES ('configuracion', "
                            "'preferencias', ?, ?) ON CONFLICT (coleccion, clave) DO UPDATE SET datos = excluded.datos, "
                            'huella = excluded.huella', (data, digest))
-        self._saved[('configuracion', 'preferencias')] = digest
+        saved[('configuracion', 'preferencias')] = digest
         return 1
 
-    def _save_logs(self, connection):
+    def _save_logs(self, connection, log_keys):
         new = []
         for entry in list(store.logs):
             key, row = _log_key(entry)
-            if key not in self._log_keys:
+            if key not in self._log_keys and key not in log_keys:
                 new.append((key, *row))
-                self._log_keys.add(key)
+                log_keys.add(key)
         if new:
             connection.executemany('INSERT OR IGNORE INTO bitacora (clave_unica, fecha_hora, usuario, tipo, '
                                    'descripcion, caso_id, camara_id, resultado, dispositivo) '

@@ -241,6 +241,10 @@ class LiveRecognition:
         if self.running:
             return
         with _start_lock:  # two slots never grab the same device at the same time
+            # Se vuelve a mirar ya con el candado: el monitoreo continuo y el botón REANUDAR
+            # pueden pedirlo a la vez, y el segundo no debe abrir otra vez la misma cámara.
+            if self.running:
+                return
             self._start(camera_id, camera_index, actor)
 
     def _start(self, camera_id, camera_index, actor):
@@ -278,15 +282,19 @@ class LiveRecognition:
         self.device_name = name or (device_name(index) if self.kind else None)
         self.actor = actor
         self._capture = capture
-        self._stop.clear()
+        # Una señal de alto por sesión: un hilo de la sesión anterior que tardó en salir (por
+        # ejemplo, descargando el modelo facial) conserva la suya, ya activada, y no revive.
+        stop = self._stop = threading.Event()
         with self._lock:
             self._frame, self.faces = None, []
         self.error, self.dark, self.fps, self._gallery_at = None, False, 0.0, 0.0
         self.recognition, self.recognition_error, self._model_retry_at = 'CARGANDO', None, 0.0
         self.ring.clear()
         self.running, self.status = True, 'EN VIVO'
-        self._threads = [threading.Thread(target=self._capture_loop, name=f'live-capture-{self.camera_id}', daemon=True),
-                         threading.Thread(target=self._analysis_loop, name=f'live-rec-{self.camera_id}', daemon=True)]
+        self._threads = [threading.Thread(target=self._capture_loop, args=(capture, stop),
+                                          name=f'live-capture-{self.camera_id}', daemon=True),
+                         threading.Thread(target=self._analysis_loop, args=(stop,),
+                                          name=f'live-rec-{self.camera_id}', daemon=True)]
         for thread in self._threads:
             thread.start()
         store.audit(actor, 'Cámara', f'Inició la transmisión en vivo de {self.camera_id}',
@@ -297,12 +305,14 @@ class LiveRecognition:
             return
         self._stop.set()
         self.running = False
-        for thread in self._threads:
+        threads, self._threads = self._threads, []
+        for thread in threads:
             if thread is not threading.current_thread():
                 thread.join(timeout=3)
-        self._threads = []
         capture, self._capture = self._capture, None
-        if capture is not None:
+        # El hilo de captura suelta la cámara al salir. Soltarla aquí con un read() todavía en
+        # curso puede tumbar el proceso: sólo se hace si ningún hilo de la sesión sigue vivo.
+        if capture is not None and not any(thread.is_alive() for thread in threads):
             capture.release()
         with self._lock:
             self._frame, self.faces = None, []  # nothing seen outlives the session
@@ -320,37 +330,52 @@ class LiveRecognition:
         return 'EN VIVO'
 
     # ------------------------------------------------------------------ workers
-    def _capture_loop(self):
+    def _capture_loop(self, capture=None, stop=None):
         """Keeps only the newest frame, so the analysis never works on a stale one.
 
         Además alimenta el anillo de evidencia a ritmo constante, con el cuadro tal como lo
-        entrega la cámara: la evidencia debe mostrar la escena como es, no en espejo.
+        entrega la cámara: la evidencia debe mostrar la escena como es, no en espejo. Un cuadro
+        que no se puede leer o procesar cuenta como perdido: el hilo no muere en silencio
+        dejando la imagen congelada y el anillo vacío. Al salir, suelta la cámara.
         """
         import cv2
+        capture = self._capture if capture is None else capture
+        stop = self._stop if stop is None else stop
         failures = 0
-        while not self._stop.is_set():
-            if self._capture is None:
-                break
-            ok, frame = self._capture.read()
-            if not ok:
-                failures += 1
-                if failures == 30:
-                    self.error, self.status = 'La cámara dejó de enviar imágenes.', 'SIN SEÑAL'
-                time.sleep(.1)
-                continue
-            if failures >= 30:
-                self.error, self.status = None, self.live_status
-            failures = 0
-            if self.ring.due():
-                self.ring.write(frame)
-            with self._lock:
-                self._frame = cv2.flip(frame, 1) if self.mirror else frame
+        try:
+            while capture is not None and not stop.is_set():
+                try:
+                    ok, frame = capture.read()
+                    if stop.is_set():  # la sesión terminó mientras se leía: el cuadro ya no es suyo
+                        break
+                    if ok:
+                        if self.ring.due():
+                            self.ring.write(frame)
+                        shown = cv2.flip(frame, 1) if self.mirror else frame
+                except Exception:  # controlador o cuadro dañado
+                    ok = False
+                if not ok:
+                    failures += 1
+                    if failures == 30:
+                        self.error, self.status = 'La cámara dejó de enviar imágenes.', 'SIN SEÑAL'
+                    time.sleep(.1)
+                    continue
+                if failures >= 30:
+                    self.error, self.status = None, self.live_status
+                failures = 0
+                with self._lock:
+                    self._frame = shown
+        finally:
+            if capture is not None:
+                capture.release()
 
-    def _ensure_recognition(self):
+    def _ensure_recognition(self, stop=None):
         """Carga el modelo facial sin interrumpir la transmisión. True cuando ya puede analizar.
 
         Si el modelo falta o no carga, la cámara sigue en vivo y grabando; el motivo queda a la
         vista y se vuelve a intentar cada FACE_MODEL_RETRY_SECONDS (por si alguien lo descarga).
+        La primera carga puede tardar minutos (descarga): si la sesión terminó mientras tanto,
+        su resultado ya no cambia el estado de la ranura.
         """
         if self.recognition == 'ACTIVO':
             return True
@@ -360,18 +385,22 @@ class LiveRecognition:
         try:
             face_engine.load()
         except face_engine.FaceEngineUnavailable as error:
-            self.recognition, self.recognition_error = 'NO_DISPONIBLE', str(error)
-            self._model_retry_at = time.monotonic() + config.FACE_MODEL_RETRY_SECONDS
+            if stop is None or not stop.is_set():
+                self.recognition, self.recognition_error = 'NO_DISPONIBLE', str(error)
+                self._model_retry_at = time.monotonic() + config.FACE_MODEL_RETRY_SECONDS
+            return False
+        if stop is not None and stop.is_set():
             return False
         self.recognition, self.recognition_error = 'ACTIVO', None
         if self.status == 'EN VIVO':
             self.status = 'RECONOCIENDO'
         return True
 
-    def _analysis_loop(self):
-        while not self._stop.is_set():
-            if not self._ensure_recognition():
-                self._stop.wait(1.0)
+    def _analysis_loop(self, stop=None):
+        stop = self._stop if stop is None else stop
+        while not stop.is_set():
+            if not self._ensure_recognition(stop):
+                stop.wait(1.0)
                 continue
             with self._lock:
                 frame = self._frame
@@ -396,8 +425,8 @@ class LiveRecognition:
                     self._record_sighting(frame, face)
             elapsed = time.perf_counter() - started
             self.fps = 1 / max(elapsed, config.LIVE_ANALYSIS_INTERVAL_SECONDS)
-            self._stop.wait(max(0.0, config.LIVE_ANALYSIS_INTERVAL_SECONDS - elapsed))
-            while not self._stop.is_set() and self._frame is frame:  # wait for a new frame
+            stop.wait(max(0.0, config.LIVE_ANALYSIS_INTERVAL_SECONDS - elapsed))
+            while not stop.is_set() and self._frame is frame:  # wait for a new frame
                 time.sleep(.01)
 
     def _refresh_gallery(self):

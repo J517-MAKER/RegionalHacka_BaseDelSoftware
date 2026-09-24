@@ -61,7 +61,7 @@ def tracking_page(case_id: str = 'BUS-2026-0184', alert_id: str = '', camera_id:
     with PageLayout('/tracking', 'Mapa y seguimiento',
                     'Dónde se vio a la persona, el trayecto estimado entre cámaras y su última posición '
                     'conocida. Cada punto requiere validación humana.'):
-        if alert_id and not alert:
+        if (alert_id and not alert) or (event_id and not any(e.event_id == event_id for e in store.evidence)):
             EmptyState('No se encontró el evento solicitado.')
             return
 
@@ -71,12 +71,13 @@ def tracking_page(case_id: str = 'BUS-2026-0184', alert_id: str = '', camera_id:
             track = next((c.candidate_id for c in tracks if get_track_sightings(c.candidate_id)),
                          tracks[0].candidate_id if tracks else '')
         options = subject_options()
+        key = None
         if event_id and track:
             key = f'track:{event_id}:{track}'
             candidate = next((c for c in store.person_candidates if c.candidate_id == track), None)
             if key not in options and candidate:
                 options[key] = f'Evento · {event_id} · {candidate.person_track_id}'
-        else:
+        elif not event_id:
             if f'case:{case_id}' not in options and get_cases():
                 case_id = get_cases()[0].id
             key = f'case:{case_id}'
@@ -84,9 +85,18 @@ def tracking_page(case_id: str = 'BUS-2026-0184', alert_id: str = '', camera_id:
             ui.select(options, value=key if key in options else None, label='Persona en seguimiento',
                       on_change=lambda e: ui.navigate.to(target_url(e.value))) \
                 .props('outlined dense').classes('w-full max-w-xl')
+        # Un evento sin personas con rostro no se sustituye por otra ficha: se dice qué falta.
+        untracked_event = bool(event_id and not track and not alert)
+        if untracked_event:
+            with ui.row().classes('page-note items-start'):
+                ui.icon('info_outline', size='16px')
+                ui.label(f'{event_id} todavía no tiene una persona con rostro para seguir entre cámaras: '
+                         'falta el modelo facial, nadie quedó de frente a la cámara o el video está '
+                         'pendiente. Revisa su evidencia.').classes('flex-1')
+                ui.link('Ver evidencia →', f'/alerts?event_id={event_id}').classes('text-xs no-underline')
 
         def current_route():
-            if alert:
+            if alert or untracked_event:
                 return None
             if event_id and track:
                 return event_track_route(event_id, track)

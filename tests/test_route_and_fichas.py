@@ -215,6 +215,18 @@ class FichaMatchingTest(StoreSnapshot):
         store.person_candidates.append(candidate)
         return candidate
 
+    def test_a_discarded_detection_does_not_return_through_its_candidate(self):
+        # BUSCAR también crea candidatos de las detecciones del propio caso. Si después el
+        # operador descarta una en /matches, tampoco vuelve al mapa por su candidato.
+        from services.route_service import case_route
+        from services.search_matching_service import get_candidates, run_search
+        run_search(CASE, actor='Operador01')
+        self.assertTrue(any(c.detection_id == 'DET-003' for c in get_candidates(CASE)))
+        next(d for d in store.detections if d.id == 'DET-003').status = 'Descartada'
+        route = case_route(CASE)
+        self.assertEqual(route.last_point.camera_id, 'CAM-007')
+        self.assertEqual(len(route.points), 2)
+
     def test_people_seen_in_an_event_are_compared_with_every_active_ficha(self):
         from services.search_matching_service import get_candidates, match_event_candidates
         self.event_person(unit(1, .1), age=26, color='azul')

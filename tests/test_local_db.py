@@ -149,6 +149,26 @@ class LocalDatabaseTest(unittest.TestCase):
         self.restart()
         self.assertEqual(store.imports, [])
 
+    def test_a_failed_save_is_retried_in_full(self):
+        # Archivo bloqueado o disco lleno: SQLite deshace la transacción, así que nada puede darse
+        # por guardado. El siguiente ciclo escribe todo, incluidos los borrados y la bitácora.
+        from unittest.mock import patch
+        from models.alert_import_record import AlertImportRecord
+        database = LocalDatabase(self.path)
+        database.load()
+        store.imports.insert(0, AlertImportRecord('ALERT-TEMP'))
+        database.save()
+        self.record_everything()
+        store.imports.clear()  # importación cancelada
+        with patch.object(LocalDatabase, '_save_logs', side_effect=sqlite3.OperationalError('database is locked')):
+            with self.assertRaises(sqlite3.OperationalError):
+                database.save()
+        self.assertGreater(database.save(), 0)
+        self.restart()
+        self.assertTrue(any(d.id == 'DET-900' for d in store.detections))
+        self.assertEqual(store.imports, [])
+        self.assertEqual(store.logs[0].description, 'EVENT-20260924-00042 creado')
+
     def test_a_damaged_document_does_not_block_the_rest(self):
         database = LocalDatabase(self.path)
         database.load()

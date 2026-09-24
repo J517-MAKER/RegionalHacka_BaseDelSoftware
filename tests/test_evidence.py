@@ -79,6 +79,9 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(len(ring.read(0, ring.written)), 2 * RATE)
         self.assertTrue(np.allclose(ring.read(ring.written - 10, ring.written), 1))
         self.assertEqual(len(ring.read(ring.written, ring.written + 100)), 0)
+        # Lo pedido desde una muestra ya descartada empieza, de verdad, en la más antigua.
+        start, samples = ring.read_span(0, RATE + 10)
+        self.assertEqual((start, len(samples)), (RATE, 10))
 
     # ------------------------------------------------------------------ PRUEBA 1
     def test_past_narration_creates_no_evidence(self):

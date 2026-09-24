@@ -155,12 +155,23 @@ class CameraMonitor:
         self._last_audio_attempt = 0.0
 
     def adapter(self, camera_id):
+        """La fuente de una cámara.
+
+        En /live se le puede asignar a una cámara del equipo cualquier cámara de la red: mientras
+        transmita con ese identificador, manda la imagen real aunque en la red figure como
+        simulada. Al dejar de transmitir, la cámara vuelve a su fuente de siempre.
+        """
         from services.cameras_service import get_camera
+        from services.live_recognition_service import running_for_camera
+        if running_for_camera(camera_id) is not None:
+            kind = 'webcam'
+        else:
+            camera = get_camera(camera_id)
+            kind = camera.stream_source if camera else 'simulated'
+        wanted = ADAPTERS.get(kind, SimulatedStreamAdapter)
         with self._lock:
-            if camera_id not in self._adapters:
-                camera = get_camera(camera_id)
-                kind = (camera.stream_source if camera else 'simulated')
-                self._adapters[camera_id] = ADAPTERS.get(kind, SimulatedStreamAdapter)(camera_id)
+            if type(self._adapters.get(camera_id)) is not wanted:
+                self._adapters[camera_id] = wanted(camera_id)
             return self._adapters[camera_id]
 
     def active_cameras(self):

@@ -330,6 +330,24 @@ class DemoFlowTest(unittest.IsolatedAsyncioTestCase):
         finally:
             logging.getLogger().removeHandler(collector)
 
+    async def test_tracking_an_event_without_faces_shows_no_other_case(self):
+        # «Iniciar seguimiento» abre /tracking?event_id=…; si nadie del evento tiene rostro
+        # comparable, no debe aparecer el trayecto de otra ficha como si fuera esa persona.
+        async with simulation() as user:
+            from services import store
+            from models.evidence_event import EvidenceEvent
+            event=EvidenceEvent('EVENT-SIN-ROSTROS','CAM-008','Pasillo B',store.now(),'POSIBLE_AUXILIO','MEDIA')
+            store.evidence.insert(0,event)
+            try:
+                await user.open('/tracking?event_id=EVENT-SIN-ROSTROS')
+                await user.should_see('todavía no tiene una persona con rostro')
+                await user.should_see('Todavía no hay observaciones para trazar un trayecto.')
+                self.assertIsNone(next(iter(user.find(ui.select).elements)).value)
+                await user.open('/tracking?event_id=EVENT-QUE-NO-EXISTE')
+                await user.should_see('No se encontró el evento solicitado.')
+            finally:
+                store.evidence.remove(event)
+
 
 if __name__=='__main__':
     unittest.main()

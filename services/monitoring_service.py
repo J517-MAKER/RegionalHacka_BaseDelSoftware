@@ -48,7 +48,9 @@ class MonitoringSession:
         if not MicrophoneCapture._device_lock.acquire(blocking=False):
             raise VoiceError('El micrófono está ocupado por otra escucha.')
         self._owns_device = True
-        self._stop.clear()
+        # Una señal de alto por sesión: si el análisis anterior sigue en una transcripción larga
+        # (la primera vez, descargando el modelo de voz), no revive junto a la nueva escucha.
+        self._stop = threading.Event()
         self.ring.clear()
         self.context.clear()
         self.error = None
@@ -78,7 +80,7 @@ class MonitoringSession:
         # El modelo tarda segundos en cargar. Se precarga aparte para que esa espera no se
         # coma justo lo que alguien diga en los primeros instantes de la escucha.
         threading.Thread(target=self._warm_up, name='voice-warmup', daemon=True).start()
-        self.worker = threading.Thread(target=self._loop, name='voice-monitor', daemon=True)
+        self.worker = threading.Thread(target=self._loop, args=(self._stop,), name='voice-monitor', daemon=True)
         self.worker.start()
 
     def _warm_up(self):
@@ -149,20 +151,22 @@ class MonitoringSession:
                 return max(0.0, float(segment.get('start') or 0))
         return max(0.0, float(segments[0].get('start') or 0)) if segments else 0.0
 
-    def _wait_for(self, sample):
-        while not self._stop.is_set() and self.ring.written < sample:
+    def _wait_for(self, sample, stop=None):
+        stop = self._stop if stop is None else stop
+        while not stop.is_set() and self.ring.written < sample:
             sleep(.15)
-        return not self._stop.is_set()
+        return not stop.is_set()
 
-    def _loop(self):
+    def _loop(self, stop=None):
+        stop = self._stop if stop is None else stop
         rate = config.AUDIO_SAMPLE_RATE
         window = int(config.AUDIO_WINDOW_SECONDS * rate)
         hop = max(1, int((config.AUDIO_WINDOW_SECONDS - config.AUDIO_OVERLAP_SECONDS) * rate))
         start, previous_end = 0, -1.0
         max_lag = int(config.AUDIO_MAX_LAG_SECONDS * rate)
-        while not self._stop.is_set():
+        while not stop.is_set():
             end = start + window
-            if not self._wait_for(end):
+            if not self._wait_for(end, stop):
                 break
             # Si el análisis se quedó atrás —una transcripción lenta, la espera de evidencia—
             # se salta al presente. Arrastrar el retraso haría que la escucha respondiera
@@ -172,17 +176,19 @@ class MonitoringSession:
                 start = max(self.ring.oldest(), self.ring.written - window)
                 end, previous_end = start + window, -1.0
             try:
-                start = self._analyze(start, end, previous_end)
+                start = self._analyze(start, end, previous_end, stop)
             except Exception as exc:  # a single bad window must not stop the service
                 self.error = str(exc) if isinstance(exc, (VoiceError, ValueError, PermissionError)) else \
                     'No fue posible analizar el último fragmento de audio.'
                 start = start + hop
             else:
                 previous_end = end / rate
-        self.status = 'DETENIDO'
+        if stop is self._stop:  # un análisis rezagado no apaga la escucha que ya se reanudó
+            self.status = 'DETENIDO'
 
-    def _analyze(self, start, end, previous_end):
+    def _analyze(self, start, end, previous_end, stop=None):
         """Returns the next absolute start sample."""
+        stop = self._stop if stop is None else stop
         rate = config.AUDIO_SAMPLE_RATE
         hop = max(1, int((config.AUDIO_WINDOW_SECONDS - config.AUDIO_OVERLAP_SECONDS) * rate))
         samples = self.ring.read(start, end)
@@ -215,9 +221,14 @@ class MonitoringSession:
             self.status = 'CONSERVANDO EVIDENCIA'
             clip_start = max(self.ring.oldest(), trigger - int(config.EVIDENCE_PRE_SECONDS * rate))
             clip_end = trigger + int(config.EVIDENCE_POST_SECONDS * rate)
-            self._wait_for(clip_end)
-            clip = self.ring.read(clip_start, clip_end)
-            clip_end = clip_start + len(clip)
+            self._wait_for(clip_end, stop)
+            if stop is self._stop:
+                # Con mucho retraso en el análisis, el principio pudo descartarse mientras se
+                # esperaba: el clip empieza donde de verdad empieza lo leído.
+                clip_start, clip = self.ring.read_span(clip_start, clip_end)
+                clip_end = clip_start + len(clip)
+            # Si no, la escucha se reinició mientras se transcribía: el anillo ya es de otra
+            # sesión y ese audio no es de este evento. El evento queda registrado, sin clip.
         event = process_text(text, self.camera_id, 'MICROPHONE', metadata, assessment=risk,
                              actor=self.actor)
         evidence = None
