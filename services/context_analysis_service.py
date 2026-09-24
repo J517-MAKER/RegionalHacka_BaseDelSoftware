@@ -89,7 +89,11 @@ def heuristic_analysis(previous_context, current_text):
                       'La frase no expresa una solicitud urgente de auxilio.')
     rejection = bool(re.search(r'\b(?:dejame|sueltame|alejate|no me sigas|me dejes)\b', text))
     pursuit = bool(re.search(r'\b(?:me (?:estan|esta|vienen|viene) siguiendo|alguien me sigue)\b', text))
-    assistance = bool(re.search(r'\b(?:necesito ayuda|ayudame|auxilio|llam[ae]n? a la policia|tengo miedo)\b', text))
+    # «ayuda» a secas cuenta como petición: quien la grita rara vez construye una frase
+    # completa. Lo que evita el falso positivo son los guardas de arriba —cita, hipótesis,
+    # pasado, ayuda cotidiana y negación—, no omitir la palabra.
+    assistance = bool(re.search(r'\b(?:ayuda|necesito ayuda|ayudame|auxilio|socorro|'
+                                r'llam[ae]n? a la policia|tengo miedo)\b', text))
     assistance = assistance or (rejection and bool(re.search(r'\bayuda\b', text)))
     groups = sum((rejection, pursuit, assistance))
     signals = [label for active, label in [(rejection, 'expresión directa de rechazo'), (pursuit, 'expresión actual de seguimiento'), (assistance, 'petición de asistencia o expresión de temor')] if active]

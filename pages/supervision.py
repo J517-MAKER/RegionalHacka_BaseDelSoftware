@@ -5,10 +5,12 @@ second review is made with the case, the camera and the evidence at hand.
 """
 from nicegui import ui
 from components.layout import PageLayout, Panel, guard_page, notify_action
+from components.candidate_review import CandidateReview, CandidateRow
 from components.states import EmptyState
 from components.status_badge import StatusBadge
 from services.evidence_service import get_deletion_requests, get_evidence, resolve_deletion
 from services.facial_service import get_detection, get_matches
+from services.search_matching_service import get_candidates
 from services.users_service import can
 
 
@@ -55,6 +57,16 @@ def supervision_page(focus: str = ''):
                             ui.label(detail).classes('stat-detail')
 
             if focus != 'deletions':
+                escalated_candidates = get_candidates(status='OPERATOR_ACCEPTED_FOR_REVIEW')
+                if escalated_candidates:
+                    with Panel('Candidatos enviados por operadores',
+                               f'{len(escalated_candidates)} PARA VALIDAR O RECHAZAR'):
+                        with ui.column().classes('p-4 w-full gap-2'):
+                            for candidate in escalated_candidates:
+                                CandidateRow(candidate, on_open=open_candidate)
+                            ui.label('Validar significa que la coincidencia es relevante para la '
+                                     'investigación. No confirma legalmente la identidad de nadie.'
+                                     ).classes('text-xs muted')
                 with Panel('Pendientes de revisión', 'COINCIDENCIAS Y EVIDENCIA ESCALADAS'):
                     with ui.column().classes('p-4 w-full gap-2'):
                         if not escalated:
@@ -96,4 +108,25 @@ def supervision_page(focus: str = ''):
                                 StatusBadge(item.status)
                     ui.label('Aprobar marca la evidencia como autorizada para eliminación y conserva el archivo '
                              'original. Quien solicita no puede autorizar su propia solicitud.').classes('text-xs muted')
+        selected = {'id': None}
+
+        def open_candidate(candidate):
+            selected['id'] = candidate.candidate_match_id
+            candidate_detail.refresh()
+            drawer.show()
+
+        with ui.right_drawer(value=False).props('width=560 bordered overlay').classes('p-0') as drawer:
+            @ui.refreshable
+            def candidate_detail():
+                from services.search_matching_service import get_candidate
+                candidate = get_candidate(selected['id'])
+                if not candidate:
+                    return
+                with ui.row().classes('panel-heading w-full'):
+                    ui.label(candidate.candidate_match_id).classes('section-title')
+                    ui.button(icon='close', on_click=drawer.hide).props('flat dense round')
+                with ui.column().classes('p-5 w-full gap-0'):
+                    CandidateReview(candidate, on_change=lambda: (candidate_detail.refresh(), tray.refresh()),
+                                    supervising=True)
+            candidate_detail()
         tray()

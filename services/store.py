@@ -17,6 +17,11 @@ alerts = seed_alerts()
 evidence = []
 imports = []
 deletion_requests = []
+# Flujo de búsqueda: fotogramas del evento, personas candidatas, perfiles y candidatos.
+event_frames = []
+person_candidates = []
+search_profiles = []
+candidate_matches = []
 users = seed_users()
 phrases = list(PHRASES)
 settings = {'General': {'Nombre del centro': 'Centro de operaciones · Región Centro'},

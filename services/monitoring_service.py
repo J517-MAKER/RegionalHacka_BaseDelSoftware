@@ -69,8 +69,18 @@ class MonitoringSession:
                              'e instalación de sounddevice.') from exc
         self.running = True
         self.status = 'ESCUCHANDO'
+        # El modelo tarda segundos en cargar. Se precarga aparte para que esa espera no se
+        # coma justo lo que alguien diga en los primeros instantes de la escucha.
+        threading.Thread(target=self._warm_up, name='voice-warmup', daemon=True).start()
         self.worker = threading.Thread(target=self._loop, name='voice-monitor', daemon=True)
         self.worker.start()
+
+    def _warm_up(self):
+        from services.voice_service import warm_up
+        try:
+            warm_up()
+        except Exception:
+            pass  # si falla, la primera ventana lo intentará de nuevo
 
     def stop(self):
         self._stop.set()
@@ -114,10 +124,18 @@ class MonitoringSession:
         window = int(config.AUDIO_WINDOW_SECONDS * rate)
         hop = max(1, int((config.AUDIO_WINDOW_SECONDS - config.AUDIO_OVERLAP_SECONDS) * rate))
         start, previous_end = 0, -1.0
+        max_lag = int(config.AUDIO_MAX_LAG_SECONDS * rate)
         while not self._stop.is_set():
             end = start + window
             if not self._wait_for(end):
                 break
+            # Si el análisis se quedó atrás —una transcripción lenta, la espera de evidencia—
+            # se salta al presente. Arrastrar el retraso haría que la escucha respondiera
+            # siempre a lo que se dijo hace medio minuto, y el anillo acabaría descartando
+            # esas muestras de todos modos.
+            if self.ring.written - end > max_lag:
+                start = max(self.ring.oldest(), self.ring.written - window)
+                end, previous_end = start + window, -1.0
             try:
                 start = self._analyze(start, end, previous_end)
             except Exception as exc:  # a single bad window must not stop the service
@@ -146,7 +164,12 @@ class MonitoringSession:
             return start + hop
         risk, previous = analyze_text(text, self.context, samples)
         clip, clip_start, clip_end, faces = None, start, end, []
+        event_mark = None
         if risk.should_create_alert:
+            # Instante real del grito: la evidencia se crea después de esperar los segundos
+            # posteriores, así que sin esta marca los fotogramas saldrían descentrados.
+            from time import monotonic
+            event_mark = monotonic()
             # Who is in view right now, before waiting for the seconds after the request.
             from services.live_recognition_service import live
             faces = live.snapshot_faces(self.camera_id)
@@ -166,6 +189,10 @@ class MonitoringSession:
                                        self._timestamp(clip_end), actor=self.actor)
             from services.live_recognition_service import LiveRecognition
             LiveRecognition.attach_faces_to_evidence(evidence, faces)
+            # Un solo event_id relaciona audio, video, fotogramas y personas candidatas.
+            # La captura es automática: el operador no tiene que pedir una fotografía.
+            from services.camera_monitor_service import capture_event_evidence
+            capture_event_evidence(evidence.event_id, self.camera_id, reference=event_mark)
         self.results.insert(0, self._summary(event, risk, evidence, previous))
         del self.results[12:]
         self.status = 'ESCUCHANDO'

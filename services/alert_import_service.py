@@ -558,6 +558,14 @@ def create_case_from_alert(record_id):
     record.linked_case_id, record.review_status = case.id, 'CASO_CREADO'
     store.audit(actor, 'Importación', f'{record.id}: caso {case.id} creado desde la alerta importada',
                 case.id, result='CASO_CREADO')
+    # Importar y buscar son pasos distintos: aquí queda el perfil listo, con la huella facial
+    # de la fotografía que el operador confirmó. La comparación no arranca sola.
+    reference = prepare_face_reference(record.photo_path)
+    from services.search_matching_service import create_search_profile
+    create_search_profile(case.id, reference_photo=reference.get('reference') or '',
+                          face_embedding=reference.get('embedding'), actor=actor,
+                          face_status=reference.get('status', 'PENDIENTE'),
+                          face_message=reference.get('message', ''))
     return case
 
 

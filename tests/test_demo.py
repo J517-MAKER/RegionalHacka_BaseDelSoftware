@@ -54,7 +54,8 @@ class DemoFlowTest(unittest.IsolatedAsyncioTestCase):
             from services.users_service import switch_demo_user
             await user.open('/voice')
             await user.should_see('SERVICIO DE DETECCIÓN')
-            await user.should_see('INICIAR MONITOREO')
+            # La detección es continua: la consola sólo permite pausarla o reanudarla.
+            await user.should_see('REANUDAR DETECCIÓN')
             with user:
                 # Ordinary conversation leaves no evidence behind.
                 normal=listen(['ayer comí tacos y se me atoró uno, ocupé ayuda'])

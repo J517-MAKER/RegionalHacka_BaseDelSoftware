@@ -1,3 +1,4 @@
+from pathlib import Path
 from nicegui import ui
 from components.layout import PageLayout,notify_action,guard_page
 from components.alert_table import EvidenceTable
@@ -5,6 +6,7 @@ from components.person_profile import InfoPair
 from components.status_badge import StatusBadge
 from services.alerts_service import start_alert_tracking
 from services.cameras_service import get_camera, get_nearby_cameras
+from services.event_frames_service import get_event_candidates, get_event_frames
 from services.evidence_service import (get_evidence, get_event, register_playback,
                                        request_deletion, review_event, verify_integrity)
 from services import store
@@ -50,8 +52,45 @@ def alerts_page(status:str=''):
                     InfoPair('Integridad', '✓ Archivo original verificado' if verify_integrity(event)
                              else '⚠ No fue posible verificar el archivo original')
                     InfoPair('SHA-256', event.integrity_hash[:32] + '…')
-                    InfoPair('Video', 'Pendiente de integración' if event.video_status == 'PENDING_INTEGRATION'
-                             else event.video_file or '—')
+
+                    # Video y fotogramas del mismo event_id: quien revisa necesita ver qué
+                    # pasó, no sólo escucharlo. Lo que no se pudo capturar se declara.
+                    if event.video_status == 'ATTACHED' and event.video_file:
+                        source = f'/evidence/video/{Path(event.video_file).name}'
+                        ui.video(source).classes('w-full')
+                        InfoPair('Video', f'{event.video_start_timestamp} → {event.video_end_timestamp}')
+                        # Poder abrirlo fuera del navegador es parte de poder verificarlo.
+                        ui.link('Descargar el fragmento original', source).props('download').classes('text-[11px]')
+                    else:
+                        InfoPair('Video', 'Pendiente de integración: la cámara no entregó imagen '
+                                          'en ese momento.')
+                    frames = get_event_frames(event.event_id)
+                    if frames:
+                        stored = [f for f in frames if f.image_path]
+                        ui.label(f'FOTOGRAMAS DEL EVENTO · {len(stored)} DE {len(frames)}').classes('eyebrow mt-3')
+                        if stored:
+                            with ui.row().classes('gap-2 flex-wrap'):
+                                for frame in stored:
+                                    with ui.column().classes('gap-1 items-center'):
+                                        ui.image(f'/evidence/frames/{Path(frame.image_path).name}') \
+                                            .classes('w-24 h-20').props('fit=cover')
+                                        ui.label(f'+{frame.offset_seconds:g} s').classes('text-[10px] muted')
+                        pending = [f for f in frames if not f.image_path]
+                        if pending:
+                            ui.label(f'{len(pending)} fotograma(s) no pudieron capturarse: '
+                                     + (pending[0].note or '')).classes('text-[10px] muted')
+                    candidates = get_event_candidates(event.event_id)
+                    if candidates:
+                        ui.label('PERSONAS EN EL EVENTO').classes('eyebrow mt-3')
+                        with ui.row().classes('gap-3 flex-wrap'):
+                            for candidate in candidates:
+                                with ui.column().classes('gap-1 items-center'):
+                                    if candidate.face_image_path:
+                                        ui.image(f'/evidence/frames/{Path(candidate.face_image_path).name}') \
+                                            .classes('w-20 h-24').props('fit=cover')
+                                    ui.label(candidate.person_track_id).classes('text-[10px] mono')
+                        ui.label('Personas vistas durante el evento. La asociación no indica que alguna '
+                                 'sea la persona que pidió ayuda.').classes('text-[10px] muted')
                     if event.face_captures:
                         ui.label('Rostros en cámara al momento del evento').classes('section-title mt-2')
                         with ui.row().classes('gap-3 flex-wrap'):

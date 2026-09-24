@@ -42,6 +42,18 @@ class VoiceTest(unittest.TestCase):
         self.assertFalse(hasattr(voice_service, 'process_voice_command'))
         self.assertFalse(hasattr(voice_service, 'COMMANDS'))
 
+    def test_a_bare_cry_for_help_is_enough(self):
+        """Quien grita pidiendo ayuda rara vez construye una frase completa."""
+        from services.voice_service import analyze_text
+        for text in ['ayuda', 'auxilio', 'socorro', 'ayúdame']:
+            with self.subTest(text=text):
+                risk, _ = analyze_text(text)
+                self.assertTrue(risk.should_create_alert, f'{text} debería alertar')
+        # Los guardas de contexto siguen evitando el falso positivo.
+        for text in ['ayúdame con la tarea', 'ayer necesité ayuda', 'no necesito ayuda']:
+            with self.subTest(text=text):
+                self.assertFalse(analyze_text(text)[0].should_create_alert, f'{text} no debería alertar')
+
     def test_no_match(self):
         for text in ['buenos días', 'mañana tengo clases temprano', 'ayudante', 'iniciar búsqueda', 'detener seguimiento del folio abc']:
             self.assertEqual(classify_intent(text)['intencion'], 'SIN_COINCIDENCIA')

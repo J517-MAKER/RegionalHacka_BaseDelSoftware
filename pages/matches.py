@@ -1,10 +1,12 @@
 from nicegui import ui
-from components.layout import PageLayout,guard_page
+from components.layout import PageLayout,Panel,guard_page
+from components.candidate_review import CandidateReview, CandidateRow
 from components.match_comparison import MatchComparison
 from components.status_badge import StatusBadge
 from components.states import EmptyState
 from services.facial_service import get_matches,get_detection
 from services.cases_service import get_cases
+from services.search_matching_service import get_candidates
 
 
 @ui.page('/matches')
@@ -45,3 +47,36 @@ def matches_page(case_id:str='',match_id:str='',review:str=''):
             # A supervisor arrives from the sidebar already filtered to what was escalated.
             state=ui.select(states,value=review if review in states else 'Todas',label='Estado de revisión',on_change=lambda:content.refresh()).props('outlined dense')
         content()
+
+        # Candidatos del motor de búsqueda: la ficha comparada con las detecciones guardadas.
+        selected_candidate={'id':None}
+
+        @ui.refreshable
+        def candidates():
+            pending=[c for c in get_candidates(case_filter.value or None)
+                     if c.status in ('AI_CANDIDATE','PENDING_HUMAN_REVIEW')]
+            if not pending:
+                return
+            with Panel('Candidatos del motor de búsqueda',
+                       f'{len(pending)} PARA REVISIÓN HUMANA · IDENTIDAD NO CONFIRMADA'):
+                with ui.column().classes('p-4 w-full gap-2'):
+                    for candidate in pending:
+                        CandidateRow(candidate,on_open=open_candidate)
+        def open_candidate(candidate):
+            selected_candidate['id']=candidate.candidate_match_id
+            detail.refresh()
+            candidate_drawer.show()
+        with ui.right_drawer(value=False).props('width=560 bordered overlay').classes('p-0') as candidate_drawer:
+            @ui.refreshable
+            def detail():
+                from services.search_matching_service import get_candidate
+                candidate=get_candidate(selected_candidate['id'])
+                if not candidate:
+                    return
+                with ui.row().classes('panel-heading w-full'):
+                    ui.label(candidate.candidate_match_id).classes('section-title')
+                    ui.button(icon='close',on_click=candidate_drawer.hide).props('flat dense round')
+                with ui.column().classes('p-5 w-full gap-0'):
+                    CandidateReview(candidate,on_change=lambda:(detail.refresh(),candidates.refresh()))
+            detail()
+        candidates()

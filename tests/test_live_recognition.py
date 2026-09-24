@@ -206,12 +206,16 @@ class LivePageTest(unittest.IsolatedAsyncioTestCase):
                     await user.should_see('● EN VIVO')
 
                     await user.open('/live')
+                    # Pausar es deliberado y se distingue de una cámara que nunca arrancó:
+                    # el monitoreo continuo no la reabre por su cuenta.
                     user.find(marker='live-stop').click()
                     await self.wait_for(lambda: not live.running)
-                    await user.should_see('DETENIDA')
+                    await user.should_see('PAUSADA')
                     await user.open('/cameras')
                     await user.should_see('Cámara del equipo detenida')
                 finally:
+                    from services.camera_monitor_service import monitor
+                    monitor.paused_by = ''
                     live.stop()
 
 

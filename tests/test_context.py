@@ -71,8 +71,21 @@ class ContextTest(unittest.TestCase):
         quiet = analyze_audio(np.ones(16000) * .001, [.1, .1])
         self.assertTrue(fuse_evidence(help_, quiet).should_create_alert)
         self.assertEqual(fuse_evidence(help_, high).classification, 'ALTA_PRIORIDAD')
-        ambiguous = heuristic_analysis([], 'ayuda')
-        self.assertEqual(fuse_evidence(ambiguous, high).classification, 'AMBIGUO')
+        # «ayuda» a secas es una petición por su lenguaje, no por el volumen: dicha en voz
+        # baja también alerta. El audio sólo agrava lo que el lenguaje ya señaló.
+        alone = heuristic_analysis([], 'ayuda')
+        self.assertTrue(fuse_evidence(alone, quiet).should_create_alert)
+        self.assertEqual(fuse_evidence(alone, quiet).classification, 'POSIBLE_AUXILIO')
+        self.assertEqual(fuse_evidence(alone, high).classification, 'ALTA_PRIORIDAD')
+        # Una frase configurada que no describe una petición sigue pidiendo más contexto.
+        from services import store
+        previous = list(store.phrases)
+        try:
+            store.phrases.append('la sombra')
+            ambiguous = heuristic_analysis([], 'la sombra')
+            self.assertEqual(fuse_evidence(ambiguous, high).classification, 'AMBIGUO')
+        finally:
+            store.phrases[:] = previous
         self.assertFalse(analyze_audio(None).available)
         self.assertFalse(analyze_audio([float('nan')] * 16000).available)
         self.assertFalse(analyze_audio(np.ones(16000)).abrupt_change)

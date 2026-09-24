@@ -8,6 +8,7 @@ from services.cases_service import get_case,add_case_photo
 from services.users_service import can
 from services.tracking_service import get_tracking_history
 from services.facial_service import get_matches
+from components.search_results import SearchResults
 
 
 @ui.page('/cases/{case_id}')
@@ -50,4 +51,5 @@ def case_detail_page(case_id:str):
                 with Panel('Secuencia de detecciones','REVISIÓN INDIVIDUAL'):
                     with ui.column().classes('panel-body'):
                         Timeline(events,on_review=review)
+                SearchResults(case_id)
                 ui.button('Abrir seguimiento completo',icon='route',on_click=lambda:ui.navigate.to(f'/tracking?case_id={case_id}')).props('outline no-caps')

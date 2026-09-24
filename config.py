@@ -65,3 +65,45 @@ CAMERA_INDEX = int(os.getenv('NEXO_CAMERA_INDEX', '0'))
 LIVE_DETECTION_COOLDOWN_SECONDS = 30
 LIVE_GALLERY_REFRESH_SECONDS = 2
 LIVE_ANALYSIS_INTERVAL_SECONDS = .15
+
+# --------------------------------------------------------------- monitoreo continuo
+# Las cámaras se consideran activas por sí mismas: nadie las "inicia" desde la interfaz.
+# La webcam del equipo es una fuente más; las demás son fuentes simuladas.
+# Se consulta a menudo para que el fragmento conservado tenga fluidez suficiente.
+CAMERA_STREAM_POLL_SECONDS = 0.2
+CAMERA_STALE_SECONDS = 90
+# Ventana de video conservada alrededor de un evento. Fuera de ella el anillo se sobrescribe.
+VIDEO_PRE_EVENT_SECONDS = 10
+VIDEO_POST_EVENT_SECONDS = 10
+VIDEO_RING_SECONDS = VIDEO_PRE_EVENT_SECONDS + VIDEO_POST_EVENT_SECONDS + 10
+VIDEO_RING_FPS = 5
+# Margen al buscar el fotograma más próximo a cada instante pedido.
+EVENT_FRAME_TOLERANCE_SECONDS = 1.0
+# Un solo fotograma puede salir borroso o de perfil: se toman varios alrededor del evento.
+EVENT_FRAME_OFFSETS_SECONDS = (0, 1, 2, 3, 5)
+
+# ------------------------------------------------------- motor de búsqueda multimodal
+# La hora de desaparición marca el inicio de la ventana prioritaria; nada se descarta por tiempo.
+SEARCH_UNKNOWN_TIME_TOLERANCE_HOURS = 12
+SEARCH_PRIORITY_WINDOW_DAYS = 7
+# Distancia en el plano de demostración; la cercanía prioriza, nunca excluye.
+SEARCH_NEAR_DISTANCE = 18.0
+SEARCH_FAR_DISTANCE = 45.0
+# Continuidad entre cámaras relacionadas: dos apariciones compatibles dentro de esta ventana.
+SEARCH_ROUTE_WINDOW_MINUTES = 20
+# Prioridad de revisión, no probabilidad de identidad.
+CANDIDATE_PRIORITY_THRESHOLD = 0.55
+CANDIDATE_MAX_RESULTS = 25
+
+# La cámara del equipo se incorpora al monitoreo continuo por sí sola. Se puede desactivar
+# (NEXO_CAMERA_AUTOSTART=false) en equipos donde la webcam se necesite para otra cosa.
+CAMERA_AUTOSTART = os.getenv('NEXO_CAMERA_AUTOSTART', 'true').lower() in ('true', '1', 'yes')
+CAMERA_AUTOSTART_RETRY_SECONDS = 20
+# Una webcam virtual sin señal entrega cuadros completamente negros: no sirve como fuente.
+CAMERA_AUTO_DEVICE = os.getenv('NEXO_CAMERA_AUTO_DEVICE', 'true').lower() in ('true', '1', 'yes')
+CAMERA_PROBE_MAX_INDEX = 4
+CAMERA_PROBE_MIN_BRIGHTNESS = 1.0
+
+# Si el análisis se queda más atrás que esto, se salta al presente en vez de arrastrar el
+# retraso: es preferible perder un fragmento antiguo que escuchar siempre con demora.
+AUDIO_MAX_LAG_SECONDS = 8

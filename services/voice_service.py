@@ -282,6 +282,20 @@ def transcribe_audio(audio):
             raise VoiceError('No fue posible transcribir el audio. Intenta nuevamente o utiliza Pruebas.') from exc
 
 
+def warm_up():
+    """Carga el modelo antes de que llegue la primera frase.
+
+    La carga cuesta varios segundos y ocurría dentro de la primera ventana analizada, así
+    que el arranque de la escucha se comía justo lo que alguien dijera al principio.
+    """
+    import numpy as np
+    try:
+        transcribe_audio(np.zeros(config.AUDIO_SAMPLE_RATE, dtype='float32'))
+    except VoiceError:
+        pass  # silencio: sólo interesa que el modelo quede en memoria
+    return _model is not None
+
+
 def transcribe_window(audio, start, previous_end):
     """Drop segments wholly contained in a previously processed overlap."""
     text, metadata = transcribe_audio(audio)

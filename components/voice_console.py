@@ -1,14 +1,15 @@
 """Monitoring console: real microphone only. Nothing here is typed by the operator."""
 from nicegui import ui, run
 from services.cameras_service import get_cameras, get_camera
-from services.monitoring_service import MonitoringSession, microphone_available
+from services.camera_monitor_service import monitor
+from services.monitoring_service import microphone_available
 from services.users_service import can, require
 import config
 
 
 def MonitoringConsole(on_event=None):
-    session = MonitoringSession()
-    client = ui.context.client
+    # Sesión compartida del monitoreo continuo: esta página la observa, no la posee.
+    session = monitor.audio_session()
     state = {'busy': False, 'shown': None, 'error': None}
 
     with ui.row().classes('items-center justify-between w-full'):
@@ -57,7 +58,7 @@ def MonitoringConsole(on_event=None):
 
     def controls():
         start_button.set_enabled(not session.running and can('voice.monitor'))
-        stop_button.set_enabled(session.running)
+        stop_button.set_enabled(session.running and can('voice.monitor'))
         camera.set_enabled(not session.running)
 
     async def start():
@@ -65,10 +66,9 @@ def MonitoringConsole(on_event=None):
             return
         state['busy'] = True
         try:
-            session.actor = require('voice.monitor')
-            session.camera_id = camera.value
-            await run.io_bound(session.start)
-            ui.notify('Monitoreo iniciado. El audio ordinario no se almacena.', type='positive', position='bottom-right')
+            actor = require('voice.monitor')
+            await run.io_bound(monitor.resume_audio, actor, camera.value)
+            ui.notify('Detección reanudada. El audio ordinario no se almacena.', type='positive', position='bottom-right')
         except Exception as exc:
             ui.notify(str(exc), type='warning', position='bottom-right')
         finally:
@@ -80,15 +80,20 @@ def MonitoringConsole(on_event=None):
             return
         state['busy'] = True
         try:
-            await run.io_bound(session.stop)
-            ui.notify('Monitoreo detenido. El audio temporal fue descartado.', type='info', position='bottom-right')
+            actor = require('voice.monitor')
+            # Una pausa deliberada se respeta: el monitoreo no reabre el micrófono solo.
+            await run.io_bound(monitor.pause_audio, actor)
+            ui.notify('Detección pausada. El audio temporal fue descartado.', type='info', position='bottom-right')
         finally:
             state['busy'] = False
             controls()
 
     with ui.row().classes('gap-3 mt-3'):
-        start_button = ui.button('INICIAR MONITOREO', icon='mic', on_click=start).props('unelevated no-caps').mark('monitor-start')
-        stop_button = ui.button('DETENER MONITOREO', icon='stop', on_click=stop).props('outline no-caps').mark('monitor-stop')
+        start_button = ui.button('REANUDAR DETECCIÓN', icon='play_arrow', on_click=start).props('unelevated no-caps').mark('monitor-start')
+        stop_button = ui.button('PAUSAR DETECCIÓN', icon='pause', on_click=stop).props('outline no-caps').mark('monitor-stop')
+    hint = ui.label('').classes('text-xs muted mt-1')
+    ui.label('Esta cámara escucha de forma continua desde que arranca NEXO: no depende de que '
+             'alguien inicie la detección.').classes('notice')
     ui.label('Audio en vivo. El sistema conserva únicamente los segundos alrededor de una posible solicitud '
              'de auxilio; el resto se sobrescribe en memoria.').classes('text-xs muted mt-1')
 
@@ -97,7 +102,9 @@ def MonitoringConsole(on_event=None):
     controls()
 
     def refresh():
-        status.set_text(session.status)
+        audio = monitor.audio_state()  # no llamarlo `state`: taparía el del componente
+        status.set_text(session.status if session.running else audio['state'])
+        hint.set_text(audio['detail'])
         dot.classes(replace='status-dot ' + ('green' if session.running else ''))
         level.set_value(session.level if session.running else 0)
         if session.error and session.error != state['error']:
@@ -117,7 +124,4 @@ def MonitoringConsole(on_event=None):
         microphone.set_text('Micrófono: Disponible' if available else 'Micrófono: No disponible')
     ui.timer(.1, probe, once=True)
 
-    async def cleanup():
-        await run.io_bound(session.stop)
-    client.on_disconnect(cleanup)
     return session

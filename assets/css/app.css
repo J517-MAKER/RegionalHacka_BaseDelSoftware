@@ -1137,3 +1137,38 @@ body {
   filter: none;
   object-fit: contain;
 }
+/* Señales de compatibilidad: separadas a propósito, para no sugerir una única certeza. */
+.signal-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit,minmax(168px,1fr));
+  gap: 10px;
+  width: 100%;
+  margin-top: 6px;
+}
+.signal-item {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 9px 11px;
+  background: #fbfcfd;
+}
+.signal-name {
+  font-size: 10px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.signal-level {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: .02em;
+}
+.signal-high { color: #2f7a55; }
+.signal-medium { color: #9d7426; }
+.signal-low { color: #b54b43; }
+.signal-none { color: var(--muted); }
+.signal-detail {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
+  margin-top: 3px;
+}

@@ -9,6 +9,7 @@ from components.states import EmptyState
 from components.status_badge import StatusBadge
 from services.cameras_service import get_cameras
 from services.cases_service import get_active_cases
+from services.camera_monitor_service import monitor
 from services.live_recognition_service import LiveRecognitionError, live
 from services.users_service import can, require
 
@@ -84,8 +85,8 @@ def live_page():
             refresh()
             try:
                 actor = require('live.control')
-                await run.io_bound(live.start, camera.value, device.value, actor)
-                ui.notify('Reconocimiento iniciado. Los cuadros no se guardan.', type='positive',
+                await run.io_bound(monitor.resume_stream, actor)
+                ui.notify('Transmisión reanudada. Los cuadros no se guardan.', type='positive',
                           position='bottom-right')
             except (LiveRecognitionError, PermissionError) as error:
                 ui.notify(str(error), type='warning', position='bottom-right')
@@ -99,8 +100,10 @@ def live_page():
             state['busy'] = True
             try:
                 actor = require('live.control')
-                await run.io_bound(live.stop, actor)
-                ui.notify('Reconocimiento detenido. La cámara quedó libre.', type='info', position='bottom-right')
+                # Una pausa deliberada se respeta: el monitoreo no reabre la cámara solo.
+                await run.io_bound(monitor.pause_stream, actor)
+                ui.notify('Transmisión pausada. La cámara quedó libre hasta que la reanudes.',
+                          type='info', position='bottom-right')
             except PermissionError as error:
                 ui.notify(str(error), type='warning', position='bottom-right')
             finally:
@@ -125,7 +128,8 @@ def live_page():
                             video = ui.interactive_image().classes('w-full live-video')
                             with ui.column().classes('w-full items-center justify-center gap-2 live-idle') as idle:
                                 ui.icon('videocam_off', size='30px', color='blue-grey-4')
-                                ui.label('Cámara detenida').classes('text-sm muted')
+                                idle_label = ui.label('Incorporando la cámara al monitoreo…').classes('text-sm muted')
+                                idle_detail = ui.label('').classes('text-xs muted text-center px-6')
                             hint = ui.label('Imagen negra: la cámara funciona pero no recibe luz. Destapa el lente '
                                             'o ilumina la escena.').classes('notice')
                         with ui.column().classes('live-controls gap-3'):
@@ -139,9 +143,11 @@ def live_page():
                                 .props('outlined dense').classes('w-full')
                             device = ui.select(DEVICES, value=live.camera_index if live.camera_index in DEVICES else 0,
                                                label='Dispositivo').props('outlined dense').classes('w-full')
-                            start_button = ui.button('INICIAR RECONOCIMIENTO', icon='videocam', on_click=start) \
+                            # La cámara ya está en marcha: estos controles son la excepción,
+                            # no el modo de encenderla. Existen para poder liberarla.
+                            start_button = ui.button('REANUDAR TRANSMISIÓN', icon='play_arrow', on_click=start) \
                                 .props('unelevated no-caps').classes('w-full').mark('live-start')
-                            stop_button = ui.button('DETENER', icon='stop', on_click=stop) \
+                            stop_button = ui.button('PAUSAR TRANSMISIÓN', icon='pause', on_click=stop) \
                                 .props('outline no-caps').classes('w-full').mark('live-stop')
                             register_button = ui.button('Registrar persona con esta cámara', icon='person_add',
                                                         on_click=register).props('outline no-caps') \
@@ -152,6 +158,8 @@ def live_page():
                                         ui.element('span').style(f'width:10px;height:10px;border-radius:2px;'
                                                                  f'background:{color};display:inline-block')
                                         ui.label(label).classes('text-[11px]')
+                            ui.label('Esta cámara forma parte del monitoreo continuo: se incorpora sola al '
+                                     'iniciarse NEXO y no depende de que alguien la encienda.').classes('notice')
                             ui.label('Los cuadros sólo existen en memoria. Se conserva únicamente el recorte del '
                                      'rostro de una posible coincidencia, para que un operador la valide o la '
                                      'descarte.').classes('text-xs muted')
@@ -173,7 +181,13 @@ def live_page():
 
         def refresh():
             running = live.running
-            status.set_text('INICIANDO…' if state['busy'] and not running else live.status)
+            stream = monitor.stream_state()
+            status.set_text('INICIANDO…' if state['busy'] and not running else
+                            live.status if running else stream['state'])
+            idle_label.set_text('Cámara pausada' if stream['state'] == 'PAUSADA'
+                                else 'Incorporando la cámara al monitoreo…' if stream['state'] == 'CONECTANDO'
+                                else 'Cámara detenida')
+            idle_detail.set_text(stream['detail'])
             dot.classes(replace='status-dot ' + ('green' if running else ''))
             info.set_text(f'{live.fps:.1f} análisis/s · {len(live.faces)} rostro(s) en cuadro · '
                           f'{len(live.gallery_counts())} persona(s) comparables' if running else '')
