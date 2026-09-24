@@ -240,6 +240,11 @@ Los archivos de evidencia (WAV, MP4, JPG) siguen en `evidence/`.
 - Empezar de cero: detén NEXO y borra `data/nexo.db` (y `evidence/` si también quieres
   descartar la evidencia de prueba).
 - Desactivarla: `NEXO_LOCAL_DB=0`. Otra ubicación: `NEXO_LOCAL_DB_PATH`.
+- Si la carpeta del proyecto se sincroniza con OneDrive y la abren varias computadoras a la
+  vez, guarda la base fuera de la carpeta sincronizada (un archivo SQLite abierto en dos
+  equipos puede dañarse), por ejemplo en `.env`:
+  `NEXO_LOCAL_DB_PATH=C:\Users\<usuario>\AppData\Local\NEXO\nexo.db`. Para compartir datos
+  entre equipos usa PostgreSQL.
 
 ## Monitoreo continuo y evidencia de video
 
@@ -250,7 +255,7 @@ modelo facial no esté descargado: el reconocimiento es una capa aparte que se c
 segundo plano. `/live` permite **pausar** una cámara (queda libre y el monitoreo no la reabre
 sola) y reanudarla.
 
-Cada cámara guarda en memoria sus últimos ~40 s de video (12 cuadros por segundo, sin
+Cada cámara guarda en memoria sus últimos ~40 s de video (hasta 12 cuadros por segundo, sin
 espejo). Cuando la voz detecta una posible solicitud de auxilio:
 
 1. Se ubica el **instante exacto de la frase** con los segmentos de Whisper, no el borde de la

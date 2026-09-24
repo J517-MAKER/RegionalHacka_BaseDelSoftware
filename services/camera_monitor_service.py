@@ -68,6 +68,8 @@ class LiveWebcamAdapter(CameraStreamAdapter):
     """
 
     kind = 'webcam'
+    IDLE_REASON = ('La cámara del equipo no estaba transmitiendo (en pausa o sin señal): el evento '
+                   'conserva el audio y la transcripción, sin video de esta cámara.')
 
     @property
     def ring(self):
@@ -87,8 +89,10 @@ class LiveWebcamAdapter(CameraStreamAdapter):
         return running_for_camera(self.camera_id) is not None
 
     def poll(self):
-        # El hilo de captura ya escribe en el anillo; volver a escribir aquí duplicaría cuadros.
-        self.read()
+        # El hilo de captura ya escribe en el anillo; aquí sólo se actualiza el motivo, sin
+        # copiar cuadros que nadie usaría.
+        from services.live_recognition_service import running_for_camera
+        self.unavailable_reason = '' if running_for_camera(self.camera_id) else self.IDLE_REASON
         return None
 
     def read(self):
@@ -97,8 +101,7 @@ class LiveWebcamAdapter(CameraStreamAdapter):
         from services.live_recognition_service import running_for_camera
         instance = running_for_camera(self.camera_id)
         if instance is None:
-            self.unavailable_reason = ('La cámara del equipo no está entregando imagen en este momento. '
-                                       'El fragmento de video queda pendiente de integración.')
+            self.unavailable_reason = self.IDLE_REASON
             return None
         self.unavailable_reason = ''
         with instance._lock:

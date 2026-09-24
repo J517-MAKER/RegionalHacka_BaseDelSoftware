@@ -1,5 +1,6 @@
 # pyrefly: ignore [missing-import]
 from nicegui import ui
+import config
 from components.layout import PageLayout, Panel, guard_page
 from components.map_view import MapView, update_map
 from components.activity_log import ActivityLog
@@ -126,9 +127,11 @@ def monitor_page():
             cameras = get_cameras()
             with ui.element('div').classes('camera-grid').style(
                     'grid-template-columns:repeat(3,minmax(0,1fr))'):
-                for cid in ('CAM-003', 'CAM-007', 'CAM-008'):
-                    CameraFeed(next(c for c in cameras if c.id == cid),
-                               lambda camera_id: ui.navigate.to(f'/cameras?camera_id={camera_id}'))
+                # Las cámaras físicas del equipo (laptop, USB y celular), las que transmiten en vivo.
+                for cid in (config.DEFAULT_CAMERA_ID, config.SECOND_CAMERA_ID, config.THIRD_CAMERA_ID):
+                    camera = next((c for c in cameras if c.id == cid), None)
+                    if camera:
+                        CameraFeed(camera, lambda camera_id: ui.navigate.to(f'/cameras?camera_id={camera_id}'))
 
         @ui.refreshable
         def side():

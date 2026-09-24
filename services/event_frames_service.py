@@ -201,7 +201,7 @@ def store_event_frames(event_id, camera_id, captures):
     stored = sum(f.processing_status == 'CAPTURADO' for f in frames)
     store.audit('Sistema', 'Evidencia',
                 f'{stored} de {len(frames)} fotograma(s) conservados para {event_id}.'
-                + ('' if stored else ' Fuente de video pendiente de integración.'),
+                + ('' if stored else ' La fuente de video no entregó imagen (el motivo queda en cada fotograma).'),
                 camera_id=camera_id, result='FOTOGRAMAS_CAPTURADOS' if stored else 'PENDIENTE_INTEGRACION')
     return frames
 
