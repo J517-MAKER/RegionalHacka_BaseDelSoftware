@@ -12,7 +12,8 @@ from services.cameras_service import get_cameras
 from services.cases_service import get_active_cases
 from services import live_recognition_service as live_service
 from services.live_recognition_service import (
-    KIND_LABELS, LIVE_INSTANCES, LiveRecognitionError, find_device, get_live_for_camera, live_1, live_2, live_3
+    KIND_LABELS, LIVE_INSTANCES, LiveRecognitionError, find_device, get_live_for_camera, live_1, live_2, live_3,
+    recognition_text
 )
 from services.users_service import can, require
 
@@ -20,9 +21,6 @@ LEGEND = [('#4caf50', 'ALTA'), ('#ffc800', 'MEDIA'), ('#ff8c00', 'BAJA'), ('#aaa
 SLOTS = {'1': live_1, '2': live_2, '3': live_3}
 TITLES = {'1': '01 / Cámara 1 · Laptop', '2': '02 / Cámara 2 · Webcam USB', '3': '03 / Cámara 3 · Celular'}
 IDLE_HINTS = {'3': 'Enlaza el celular con Enlace Móvil de Windows; se incorpora solo en unos segundos'}
-RECOGNITION_TEXT = {'ACTIVO': '● Reconocimiento facial activo',
-                    'CARGANDO': '● Cargando el modelo facial (la cámara ya graba)',
-                    'NO_DISPONIBLE': '● Sin reconocimiento facial (la cámara graba igual)'}
 
 
 def device_options(inst, devices):
@@ -302,9 +300,7 @@ def live_page():
                                    f'Se reintenta sola: {problem}' if connecting and problem else '')
                 w['device'].set_text(f'Dispositivo {inst.camera_index} · {inst.device_name or "sin nombre"} '
                                      f'→ {inst.camera_id}' if running else '')
-                w['recognition'].set_text(RECOGNITION_TEXT.get(inst.recognition, '') +
-                                          (f': {inst.recognition_error}' if inst.recognition == 'NO_DISPONIBLE'
-                                           and inst.recognition_error else '') if running else '')
+                w['recognition'].set_text(recognition_text(inst) if running else '')
                 w['recognition'].classes(replace='text-[11px] ' + ('text-[#b45309]' if inst.recognition == 'NO_DISPONIBLE'
                                                                     else 'text-[#2f7a55]'))
                 w['evidence'].set_text(f'Evidencia lista: {inst.ring.span():.0f} s de video en memoria '

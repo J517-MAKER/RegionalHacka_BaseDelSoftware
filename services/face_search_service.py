@@ -22,8 +22,15 @@ def model_status():
         return False, 'InsightFace no está instalado: python -m pip install -r requirements.txt'
     if face_engine.ready():
         return True, 'Motor facial listo.'
-    return False, ('El modelo facial no está descargado en este equipo (descarga única de ~330 MB). '
-                   'Puedes descargarlo aquí o con: python -m services.face_engine')
+    from services.model_setup import setup
+    if setup.face == 'DESCARGANDO':
+        downloaded = face_engine.download_progress()
+        return False, ('Descargando el modelo facial por primera vez (unos 280 MB)'
+                       + (f': {downloaded:.0f} MB' if downloaded else '') + '. La búsqueda se habilita sola al terminar.')
+    if setup.face == 'ERROR':
+        return False, f'{setup.face_error} También puedes reintentarlo aquí.'
+    return False, ('El modelo facial no está descargado en este equipo (descarga única de unos 280 MB). '
+                   'Puedes descargarlo aquí.')
 
 
 def download_model():

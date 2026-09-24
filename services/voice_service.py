@@ -109,7 +109,9 @@ def process_text(text, camera_id=None, source='MICROPHONE', recognition_metadata
     if event.intent == 'SOLICITUD_AUXILIO':
         create_voice_alert(event)
         register_capture_in_database(event)
-    else:
+    elif risk.classification != 'NORMAL':
+        # La conversación ordinaria no deja rastro en la bitácora: con la escucha continua serían
+        # cientos de registros por hora, y lo que se dijo sin señales de auxilio se descarta.
         store.audit('Sistema', 'Voz', f'{event.id}: {event.classification}; prioridad {event.priority}', camera_id=camera_id, result=event.status)
     prune_voice_history()
     return event
@@ -255,6 +257,18 @@ class MicrophoneCapture:
 
 _model = None
 _model_lock = threading.Lock()
+
+
+def model_loaded():
+    return _model is not None
+
+
+def model_cached():
+    """True si el modelo de voz ya está en la caché de Hugging Face: cargarlo no descarga nada."""
+    import os
+    from pathlib import Path
+    cache = os.getenv('HF_HUB_CACHE') or Path(os.getenv('HF_HOME') or Path.home() / '.cache' / 'huggingface') / 'hub'
+    return any(Path(cache).glob(f'models--Systran--faster-whisper-{config.VOICE_MODEL}/snapshots/*/model.bin'))
 
 
 def transcribe_audio(audio):

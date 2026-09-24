@@ -72,6 +72,19 @@ def stop_database_sync():
     database.stop()
 
 
+def start_model_setup():
+    """Deja listos los modelos facial y de voz sin que nadie ejecute nada: la primera vez se
+    descargan solos en segundo plano y, sin conexión, se reintenta cada minuto
+    (services/model_setup.py). Se desactiva con NEXO_MODELS_AUTOPREPARE=false."""
+    from services.model_setup import setup
+    setup.start()
+
+
+def stop_model_setup():
+    from services.model_setup import setup
+    setup.stop()
+
+
 def start_continuous_monitoring():
     """Enciende la cámara del equipo y el micrófono sin que nadie tenga que pulsar
     INICIAR/REANUDAR: así el llamado de auxilio detectado por voz queda vinculado a la
@@ -92,7 +105,9 @@ if not app.is_started:  # the interface tests re-execute this module
     app.on_startup(start_local_database)
     app.on_startup(start_voice_retention)
     app.on_startup(start_database_sync)
+    app.on_startup(start_model_setup)
     app.on_startup(start_continuous_monitoring)
+    app.on_shutdown(stop_model_setup)
     app.on_shutdown(stop_live_cameras)  # libera las cámaras al detener el servidor
     app.on_shutdown(stop_continuous_monitoring)
     app.on_shutdown(stop_database_sync)

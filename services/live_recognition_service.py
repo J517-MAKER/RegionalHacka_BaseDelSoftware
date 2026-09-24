@@ -602,6 +602,24 @@ def is_live_camera(camera_id):
     return get_live_for_camera(camera_id) is not None
 
 
+RECOGNITION_TEXT = {'ACTIVO': '● Reconocimiento facial activo',
+                    'CARGANDO': '● Cargando el modelo facial (la cámara ya graba)',
+                    'NO_DISPONIBLE': '● Sin reconocimiento facial (la cámara graba igual)'}
+
+
+def recognition_text(inst):
+    """Estado del reconocimiento de una ranura en palabras simples. La primera vez el modelo se
+    descarga solo: se dice cuánto lleva, en lugar de pedirle a nadie que ejecute un comando."""
+    if inst.recognition == 'CARGANDO' and not face_engine.model_downloaded():
+        downloaded = face_engine.download_progress()
+        return ('● Descargando el modelo facial por primera vez (unos 280 MB, sólo esta vez)'
+                + (f': {downloaded:.0f} MB' if downloaded else '') + '. La cámara ya graba.')
+    text = RECOGNITION_TEXT.get(inst.recognition, '')
+    if inst.recognition == 'NO_DISPONIBLE' and inst.recognition_error:
+        text += f': {inst.recognition_error}'
+    return text
+
+
 class _AnyLiveCamera:
     """Estado agregado de las dos ranuras, para enlazarlo desde la interfaz.
 

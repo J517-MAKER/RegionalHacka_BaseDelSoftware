@@ -73,11 +73,16 @@ Instalar y ejecutar:
 
 ```bash
 python -m pip install -r requirements.txt
-python -m services.face_engine
 python main.py
 ```
 
-El segundo comando descarga una sola vez el modelo facial (~330 MB, en `~/.insightface`) y ejecuta una autoprueba; ver [Reconocimiento facial](#reconocimiento-facial-insightface).
+**Los modelos se descargan solos.** La primera vez que arranca, NEXO descarga en segundo plano
+el modelo facial (unos 280 MB, en `~/.insightface`) y el de voz (unos 145 MB, en la caché de
+Hugging Face). El encabezado muestra el avance («DESCARGANDO RECONOCIMIENTO FACIAL · 120 MB») y,
+al terminar, el reconocimiento se activa sin reiniciar; mientras tanto la cámara ya graba. Sólo
+esa vez se necesita internet: sin conexión, NEXO lo vuelve a intentar solo cada minuto. Para
+descargarlo por adelantado y hacer una autoprueba sigue existiendo
+`python -m services.face_engine`; ver [Reconocimiento facial](#reconocimiento-facial-insightface).
 
 Se abre **http://127.0.0.1:8080** en el navegador, con redirección al centro de monitoreo. No requiere claves de API ni una base de datos. Si ya existe el entorno `.venv` preparado en este equipo, puede ejecutarse directamente con:
 
@@ -315,8 +320,8 @@ nadie ni confirma una identidad.
 
 Además, sin que nadie lo pida: las personas de un evento se comparan con todas las fichas
 activas, y una ficha nueva se compara con lo que las cámaras ya guardaron (si el modelo facial
-está cargado). Requiere el modelo facial (`python -m services.face_engine`, o el botón
-«Descargar modelo facial» de la página).
+está cargado). Requiere el modelo facial, que NEXO descarga solo la primera vez que arranca
+(la página se habilita sola al terminar).
 
 ## Importar alertas de búsqueda (OCR)
 
@@ -399,15 +404,16 @@ fotografía, y dos fotografías de la misma persona dan huellas parecidas.
 
 ### Instalación y autoprueba
 
-`requirements.txt` ya incluye `insightface` y `onnxruntime`. Después de instalarlo:
+`requirements.txt` ya incluye `insightface` y `onnxruntime`. No hace falta ejecutar nada más:
+NEXO descarga el modelo solo la primera vez que arranca (`services/model_setup.py`), en
+`~/.insightface/models/buffalo_l`, fuera del proyecto para que no viaje en el repositorio ni en
+los ZIP. Para descargarlo por adelantado y comprobar la instalación:
 
 ```bash
 python -m services.face_engine
 ```
 
-Descarga el modelo una sola vez (~330 MB) en `~/.insightface/models/buffalo_l`,
-fuera del proyecto para que no viaje en el repositorio ni en los ZIP, y ejecuta una
-autoprueba con la foto de ejemplo de la librería:
+Descarga el modelo si falta y ejecuta una autoprueba con la foto de ejemplo de la librería:
 
 ```text
 Motor: InsightFace buffalo_l
@@ -494,8 +500,9 @@ identidad: todo queda pendiente de validación humana.
 Variables en `config.py`: `FACE_MATCH_THRESHOLD`, `FACE_LEVEL_MEDIUM`,
 `FACE_LEVEL_HIGH`, `FACE_MIN_DET_SCORE` (0.5), `FACE_MODEL` (`buffalo_l`),
 `FACE_MODEL_ROOT` (`~/.insightface`) y `FACE_AUTO_DOWNLOAD` (`true`: si falta el
-modelo se descarga en el primer uso; con `false` se muestra el comando para
-descargarlo).
+modelo se descarga solo; con `false` se muestra el comando para descargarlo). En `.env`,
+`NEXO_MODELS_AUTOPREPARE=false` evita que los modelos se preparen al arrancar (entonces se
+cargan en el primer uso).
 
 ### Licencia y privacidad
 

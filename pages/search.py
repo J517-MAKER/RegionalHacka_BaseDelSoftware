@@ -39,11 +39,23 @@ def search_page(case_id: str = ''):
             with ui.column().classes('p-4 w-full gap-3'):
                 engine_ready, engine_message = searcher.model_status()
                 with ui.row().classes('items-center gap-3 w-full') as engine_row:
-                    ui.icon('check_circle' if engine_ready else 'warning', color='positive' if engine_ready else 'warning')
+                    engine_icon = ui.icon('check_circle' if engine_ready else 'warning',
+                                          color='positive' if engine_ready else 'warning')
                     engine_label = ui.label(engine_message).classes('text-xs')
                     download = ui.button('Descargar modelo facial', icon='download', on_click=lambda: get_model()) \
                         .props('outline dense no-caps').classes('ml-auto')
                     download.set_visibility(not engine_ready and can('cases.import'))
+
+                def watch_engine():
+                    """El modelo se prepara solo al arrancar NEXO: la página se habilita sola al terminar."""
+                    ready, message = searcher.model_status()
+                    engine_label.set_text(message)
+                    if ready:
+                        engine_icon.set_name('check_circle')
+                        engine_icon.props('color=positive')
+                        download.set_visibility(False)
+                        engine_watch.deactivate()
+                engine_watch = ui.timer(3, watch_engine, active=not engine_ready)
                 with ui.tabs().classes('w-full border-b border-[#dce2e7]') as tabs:
                     registered_tab = ui.tab('Ficha registrada', icon='folder_shared')
                     upload_tab = ui.tab('Subir ficha o fotografía autorizada', icon='upload_file')

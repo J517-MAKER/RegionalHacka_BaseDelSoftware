@@ -26,8 +26,11 @@ def speech(seconds, amplitude=.2):
 
 class PipelineTest(unittest.TestCase):
     def setUp(self):
+        # Cada evento deja también fotos y personas: sin restaurarlas, un evento de otra prueba
+        # con el mismo identificador heredaría las de éste.
         self.snapshot = (store.voice_events[:], store.alerts[:], store.logs[:],
-                         store.evidence[:], store.deletion_requests[:])
+                         store.evidence[:], store.deletion_requests[:], store.event_frames[:],
+                         store.person_candidates[:], store.candidate_matches[:])
         store.evidence.clear()
         store.deletion_requests.clear()
         self.directory = tempfile.TemporaryDirectory()
@@ -45,8 +48,8 @@ class PipelineTest(unittest.TestCase):
     def tearDown(self):
         for item in reversed(self.patches):
             item.stop()
-        (store.voice_events[:], store.alerts[:], store.logs[:],
-         store.evidence[:], store.deletion_requests[:]) = self.snapshot
+        (store.voice_events[:], store.alerts[:], store.logs[:], store.evidence[:], store.deletion_requests[:],
+         store.event_frames[:], store.person_candidates[:], store.candidate_matches[:]) = self.snapshot
 
     # ------------------------------------------------------------------ helpers
     def session(self):

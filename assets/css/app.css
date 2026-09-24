@@ -262,6 +262,20 @@ body {
   font-size: 10px;
   color: #83909b;
 }
+.stat-link {
+  color: inherit;
+  text-decoration: none;
+  transition: background .15s;
+}
+.stat-link:hover {
+  background: #f6f8fa;
+}
+.stat-value.matches {
+  color: #8a6420;
+}
+.stat-value.distress {
+  color: #a8322a;
+}
 .workspace-grid {
   display: grid;
   grid-template-columns: minmax(0,1fr) 300px;
@@ -1284,6 +1298,16 @@ body {
 }
 .header-alert-chip.distress { background: #fcebea; color: #a8322a; border: 1px solid #efc2bd; }
 .header-alert-chip.matches { background: #fbf4e6; color: #8a6420; border: 1px solid #eddfbf; }
+/* Con varios avisos a la vez, el encabezado no se parte en dos líneas: los avisos se recortan. */
+.topbar { flex-wrap: nowrap; }
+.topbar > * { flex-shrink: 0; }
+.topbar > .header-alert-chip { flex-shrink: 1; min-width: 110px; overflow: hidden; }
+.header-alert-chip > div { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+@media (max-width: 1150px) {
+  .header-connection { display: none; }
+}
+.header-alert-chip.setup { background: #eef3f6; color: var(--blue); border: 1px solid var(--line); }
+.header-alert-chip.setup.failed { background: #fbf4e6; color: #8a6420; border-color: #eddfbf; }
 .header-alert-chip .status-dot { background: currentColor; animation: badge-blink 1.2s ease-in-out infinite; }
 @keyframes badge-blink { 50% { opacity: .25; } }
 @media (max-width: 900px) {

@@ -29,6 +29,9 @@ DATA_DIR = BASE_DIR / 'data'
 MAPBOX_TOKEN = os.getenv('NEXO_MAPBOX_TOKEN', '')
 
 VOICE_MODEL = os.getenv('VOICE_MODEL', 'base')
+# Windows sin modo desarrollador no crea enlaces simbólicos: la caché de Hugging Face funciona
+# igual (copia los archivos), así que su advertencia sólo confunde en la consola.
+os.environ.setdefault('HF_HUB_DISABLE_SYMLINKS_WARNING', '1')
 VOICE_LANGUAGE = 'es'
 VOICE_DEMO_MODE = os.getenv('VOICE_DEMO_MODE', 'true').lower() in ('true', '1', 'yes')
 AUDIO_SAMPLE_RATE = 16000
@@ -109,6 +112,9 @@ FACE_MODEL = os.getenv('FACE_MODEL', 'buffalo_l')
 # Fuera del proyecto: el modelo pesa ~330 MB y no debe viajar en el repositorio ni en los ZIP.
 FACE_MODEL_ROOT = Path(os.getenv('FACE_MODEL_ROOT', '~/.insightface')).expanduser()
 FACE_AUTO_DOWNLOAD = os.getenv('FACE_AUTO_DOWNLOAD', 'true').lower() in ('true', '1', 'yes')
+# Al arrancar, los modelos facial y de voz se preparan solos en segundo plano (la primera vez se
+# descargan). Así nadie tiene que ejecutar nada y todo queda listo aunque no haya cámara.
+MODELS_AUTOPREPARE = os.getenv('NEXO_MODELS_AUTOPREPARE', 'true').lower() in ('true', '1', 'yes')
 FACE_MIN_DET_SCORE = 0.5
 # Similitud coseno entre huellas de buffalo_l. Orientativa: siempre requiere revisión humana.
 FACE_MATCH_THRESHOLD = 0.45

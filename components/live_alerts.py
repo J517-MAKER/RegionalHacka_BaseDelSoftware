@@ -18,8 +18,39 @@ def _set_href(link, url):
         link.update()
 
 
+def SetupNotice():
+    """Mientras los modelos facial y de voz se preparan (la primera vez, descargándose solos),
+    el encabezado lo dice; si falló la descarga, que se reintenta sola. Listos, desaparece."""
+    from services.model_setup import WORKING, setup
+    chip = ui.element('div').classes('header-alert-chip setup').mark('header-setup')
+    with chip:
+        spinner = ui.spinner(size='11px')
+        problem = ui.icon('sync_problem', size='13px')
+        text = ui.label('')
+        tip = ui.tooltip('')
+
+    def refresh():
+        notice = setup.notice()
+        chip.set_visibility(bool(notice))
+        if not notice:
+            return
+        working = setup.face in WORKING or setup.voice in WORKING
+        spinner.set_visibility(working)
+        problem.set_visibility(not working)
+        if working:
+            chip.classes(remove='failed')
+        else:
+            chip.classes(add='failed')
+        text.set_text(notice[0])
+        tip.set_text(notice[1])
+
+    refresh()
+    ui.timer(REFRESH_SECONDS, refresh)
+
+
 def HeaderAlerts():
     show_events, show_matches = can('alerts.view'), can('matches.view')
+    SetupNotice()
     if not (show_events or show_matches):
         return
     # Lo que ya existía al abrir la página no se anuncia otra vez: sólo lo nuevo.

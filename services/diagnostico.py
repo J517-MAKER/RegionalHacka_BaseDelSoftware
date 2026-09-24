@@ -77,15 +77,19 @@ def check_models():
         line('OK', f'Modelo facial {config.FACE_MODEL}', str(face_engine.model_dir()))
     else:
         line('AVISO', f'Modelo facial {config.FACE_MODEL}',
-             'no descargado (~330 MB). Ejecuta: python -m services.face_engine. Sin él la cámara graba '
-             'igual, pero no reconoce rostros.')
+             'no descargado todavía (unos 280 MB): NEXO lo descarga solo al arrancar, sólo la primera vez '
+             '(necesita internet). Mientras tanto la cámara graba, pero no reconoce rostros.'
+             if config.FACE_AUTO_DOWNLOAD else
+             'no descargado y la descarga automática está desactivada (FACE_AUTO_DOWNLOAD=false). '
+             'Descárgalo con: python -m services.face_engine')
     cache = Path(os.getenv('HF_HOME', Path.home() / '.cache' / 'huggingface')) / 'hub'
     whisper = list(cache.glob(f'models--Systran--faster-whisper-{config.VOICE_MODEL}')) if cache.exists() else []
     if whisper:
         line('OK', f'Modelo de voz faster-whisper «{config.VOICE_MODEL}»', str(whisper[0]))
     else:
         line('AVISO', f'Modelo de voz faster-whisper «{config.VOICE_MODEL}»',
-             'se descargará solo la primera vez que el micrófono escuche (necesita Internet).')
+             'no descargado todavía (unos 145 MB): NEXO lo descarga solo al arrancar, sólo la primera vez '
+             '(necesita internet).')
 
 
 def check_storage():
