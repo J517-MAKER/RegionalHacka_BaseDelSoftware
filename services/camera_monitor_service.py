@@ -257,7 +257,8 @@ class CameraMonitor:
         from services.live_recognition_service import LIVE_INSTANCES
         if not autostart_enabled() or self.paused_by:
             return False
-        pending = [inst for inst in LIVE_INSTANCES if not inst.running]
+        # Una cámara pausada a mano desde la página en vivo se respeta hasta que la inicien.
+        pending = [inst for inst in LIVE_INSTANCES if not inst.running and not inst.paused_by]
         if not pending:
             return False
         now = time.monotonic()
@@ -289,6 +290,7 @@ class CameraMonitor:
         self._last_attempt = 0.0
         problems = []
         for instance in LIVE_INSTANCES:
+            instance.paused_by = ''
             if instance.running:
                 continue
             try:

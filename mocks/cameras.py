@@ -32,8 +32,8 @@ def seed_cameras():
                       last_seen='2026-09-23 09:12:00' if i in (9,14) else '2026-09-23 10:28:04',
                       lat=PLACES[i][0], lng=PLACES[i][1])
                for i,name in enumerate(NAMES)]
-    # Las dos cámaras físicas del equipo: la de la laptop y la webcam USB.
-    physical = {config.DEFAULT_CAMERA_ID, config.SECOND_CAMERA_ID}
+    # Las cámaras físicas del equipo: la de la laptop, la webcam USB y el celular enlazado.
+    physical = {config.DEFAULT_CAMERA_ID, config.SECOND_CAMERA_ID, config.THIRD_CAMERA_ID}
     for camera in cameras:
         # Topología explícita: qué cámaras son contiguas. Permite evaluar si una secuencia
         # de detecciones es geográficamente coherente sin inventar el camino recorrido.
