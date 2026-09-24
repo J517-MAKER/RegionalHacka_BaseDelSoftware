@@ -300,9 +300,11 @@ class DemoFlowTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(evidence.reviewed_by,'Operador01')
                 user.find('Iniciar seguimiento').click()
                 await asyncio.sleep(.2)
+                # Con evidencia, el seguimiento de las personas del evento es real y queda confirmado.
                 self.assertTrue(alert.tracking_requested)
-                self.assertFalse(alert.tracking_started)
-                await user.should_see('Módulo de seguimiento pendiente de integración.')
+                self.assertTrue(alert.tracking_started)
+                self.assertEqual(evidence.tracking_status,'CONFIRMADO')
+                self.assertTrue(any('confirmó el seguimiento' in log.description for log in store.logs))
 
                 with user:
                     with self.assertRaises(PermissionError):

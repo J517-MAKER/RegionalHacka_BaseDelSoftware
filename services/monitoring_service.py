@@ -6,7 +6,7 @@ request for help is written to disk, together with its surrounding seconds.
 """
 import threading
 from datetime import datetime, timedelta
-from time import sleep
+from time import monotonic, sleep
 import config
 from models.conversation_context import ConversationContext
 from services.audio_buffer import AudioRing
@@ -36,6 +36,10 @@ class MonitoringSession:
         self.worker = None
         self._stop = threading.Event()
         self._owns_device = False
+        # (muestras escritas, reloj monotónico, fecha y hora) al llegar el último bloque del
+        # micrófono. Ubica en el tiempo cualquier muestra reciente sin acumular deriva entre el
+        # reloj de la tarjeta de sonido y el del sistema, y alinea el audio con las cámaras.
+        self._anchor = None
 
     # ------------------------------------------------------------------ capture
     def start(self):
@@ -49,15 +53,17 @@ class MonitoringSession:
         self.context.clear()
         self.error = None
         self.started_wall = datetime.now()
+        self._anchor = None
         try:
             import numpy as np
             import sounddevice as sd
 
-            def callback(data, frames, time, status):
+            def callback(data, frames, time_info, status):
                 if status:
                     self.error = 'Se interrumpió la captura de audio. Revisa el dispositivo.'
                 chunk = data[:, 0].copy()
-                self.ring.write(chunk)
+                written = self.ring.write(chunk)
+                self._anchor = (written, monotonic(), datetime.now())
                 self.level = min(1.0, float(np.sqrt(np.mean(chunk ** 2))) * 10)
 
             self.stream = sd.InputStream(samplerate=config.AUDIO_SAMPLE_RATE, channels=1,
@@ -111,8 +117,37 @@ class MonitoringSession:
                 MicrophoneCapture._device_lock.release()
 
     # ------------------------------------------------------------------ pipeline
+    def sample_clock(self, sample):
+        """(reloj monotónico, fecha y hora) de una muestra absoluta del anillo.
+
+        Con micrófono real se calcula desde el último bloque recibido; sin él (pruebas), desde
+        el inicio de la sesión, y el monotónico queda en None porque no hay cámara que alinear.
+        """
+        anchor = self._anchor
+        if anchor:
+            written, mono, wall = anchor
+            delta = (written - sample) / config.AUDIO_SAMPLE_RATE
+            return mono - delta, wall - timedelta(seconds=delta)
+        started = self.started_wall or datetime.now()
+        return None, started + timedelta(seconds=sample / config.AUDIO_SAMPLE_RATE)
+
     def _timestamp(self, sample):
-        return (self.started_wall + timedelta(seconds=sample / config.AUDIO_SAMPLE_RATE)).strftime('%Y-%m-%d %H:%M:%S')
+        return self.sample_clock(sample)[1].strftime('%Y-%m-%d %H:%M:%S')
+
+    @staticmethod
+    def trigger_offset(metadata):
+        """Segundos desde el inicio de la ventana hasta la frase de auxilio.
+
+        Whisper entrega cada segmento con su propio inicio. Se toma el primero que ya suena a
+        petición de ayuda por sí solo; si ninguno lo hace aislado (lo decidió el contexto), el
+        primero con voz. Así el clip queda centrado en la frase y no en el borde de la ventana.
+        """
+        from services.voice_service import classify_intent
+        segments = (metadata or {}).get('segments') or []
+        for segment in segments:
+            if classify_intent(segment.get('text') or '')['intencion'] == 'SOLICITUD_AUXILIO':
+                return max(0.0, float(segment.get('start') or 0))
+        return max(0.0, float(segments[0].get('start') or 0)) if segments else 0.0
 
     def _wait_for(self, sample):
         while not self._stop.is_set() and self.ring.written < sample:
@@ -164,20 +199,22 @@ class MonitoringSession:
             return start + hop
         risk, previous = analyze_text(text, self.context, samples)
         clip, clip_start, clip_end, faces = None, start, end, []
-        event_mark = None
+        event_mark, trigger = None, start
         if risk.should_create_alert:
-            # Instante real del grito: la evidencia se crea después de esperar los segundos
-            # posteriores, así que sin esta marca los fotogramas saldrían descentrados.
-            from time import monotonic
-            event_mark = monotonic()
+            # Instante real de la frase dentro de la ventana, no el del final del análisis: la
+            # transcripción llega segundos después y el clip saldría descentrado.
+            trigger = start + int(self.trigger_offset(metadata) * rate)
+            event_mark = self.sample_clock(trigger)[0]
+            if event_mark is None:  # sin micrófono real: se estima respecto del presente
+                event_mark = monotonic() - (self.ring.written - trigger) / rate
             # Who is in view right now, before waiting for the seconds after the request.
             from services.live_recognition_service import running_for_camera
             inst = running_for_camera(self.camera_id)
             faces = inst.snapshot_faces(self.camera_id) if inst else []
             # Keep the seconds before and after the possible request for help.
             self.status = 'CONSERVANDO EVIDENCIA'
-            clip_start = max(0, start - int(config.EVIDENCE_PRE_SECONDS * rate))
-            clip_end = end + int(config.EVIDENCE_POST_SECONDS * rate)
+            clip_start = max(self.ring.oldest(), trigger - int(config.EVIDENCE_PRE_SECONDS * rate))
+            clip_end = trigger + int(config.EVIDENCE_POST_SECONDS * rate)
             self._wait_for(clip_end)
             clip = self.ring.read(clip_start, clip_end)
             clip_end = clip_start + len(clip)
@@ -187,17 +224,24 @@ class MonitoringSession:
         if clip is not None and len(clip):
             from services.evidence_service import create_evidence
             evidence = create_evidence(event, risk, clip, self._timestamp(clip_start),
-                                       self._timestamp(clip_end), actor=self.actor)
+                                       self._timestamp(clip_end), actor=self.actor,
+                                       trigger_timestamp=self._timestamp(trigger))
             from services.live_recognition_service import LiveRecognition
             LiveRecognition.attach_faces_to_evidence(evidence, faces)
-            # Un solo event_id relaciona audio, video, fotogramas y personas candidatas.
-            # La captura es automática: el operador no tiene que pedir una fotografía.
+            # Un solo event_id relaciona audio, video, fotos y personas candidatas. La captura
+            # es automática: el operador no tiene que pedir una fotografía ni un video.
             from services.camera_monitor_service import capture_event_evidence
-            capture_event_evidence(evidence.event_id, self.camera_id, reference=event_mark)
+            audio_start = self.sample_clock(clip_start)[0]
+            if audio_start is None:
+                audio_start = event_mark - (trigger - clip_start) / rate
+            capture_event_evidence(evidence.event_id, self.camera_id, reference=event_mark,
+                                   audio={'samples': clip, 'rate': rate, 'start_mono': audio_start})
         self.results.insert(0, self._summary(event, risk, evidence, previous))
         del self.results[12:]
         self.status = 'ESCUCHANDO'
-        return (clip_end if clip is not None else start + hop)
+        # Tras un evento se sigue después de la ventana completa: si el clip terminó antes, la
+        # misma frase no debe volver a analizarse y crear un segundo evento.
+        return max(clip_end, end) if clip is not None else start + hop
 
     def _summary(self, event, risk, evidence, previous):
         """Operator-facing summary only: no JSON, objects or internal names."""
@@ -210,8 +254,14 @@ class MonitoringSession:
                     'POSIBLE_AUXILIO': 'Posible solicitud de auxilio',
                     'ALTA_PRIORIDAD': 'Posible solicitud de auxilio con varias señales'}
         if evidence:
+            if evidence.video_status == 'ATTACHED':
+                video = (f'Video{" con audio" if evidence.video_has_audio else ""} de '
+                         f'{evidence.video_camera_id} conservado ({config.EVIDENCE_PRE_SECONDS} s antes y '
+                         f'{config.EVIDENCE_POST_SECONDS} s después de la frase).')
+            else:
+                video = 'Video pendiente: ninguna cámara del equipo entregaba imagen en ese momento.'
             outcome = (f'Evento {evidence.event_id} creado.\nAudio protegido correctamente '
-                       f'({evidence.audio_duration:.0f} s).\nPendiente de revisión.')
+                       f'({evidence.audio_duration:.0f} s).\n{video}\nPendiente de revisión.')
         elif risk.classification == 'AMBIGUO':
             outcome = 'Sin evento. Se requiere más contexto; el audio no se conserva.'
         else:

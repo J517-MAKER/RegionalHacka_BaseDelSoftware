@@ -74,7 +74,7 @@ class AssistantTest(unittest.TestCase):
     def test_last_detection_matches_and_camera(self):
         last = handle_command('muéstrame la última detección del folio 184')
         self.assertEqual(last['status'], 'SUCCESS')
-        self.assertIn('CAM-012', last['detail'])
+        self.assertIn('CAM-008', last['detail'])  # la última de su trayecto entre las cámaras del equipo
         self.assertIn('10:25:41', last['detail'])
         self.assertIn('case_id=BUS-2026-0184', last['route'])
 

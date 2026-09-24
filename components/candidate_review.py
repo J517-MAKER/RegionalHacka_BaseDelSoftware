@@ -1,16 +1,17 @@
-"""Revisión de un candidato: ficha a la izquierda, detección a la derecha, señales debajo.
+"""Revisión de un candidato: ficha a la izquierda, persona de la cámara a la derecha.
 
-Deliberadamente no se muestra un porcentaje de identidad. Un número único —«93 % es Carlos»—
-sugiere una certeza que el sistema no tiene y esconde de qué señal viene la sospecha. Se
-muestran las señales por separado y el resultado se llama prioridad de revisión.
+Debajo, cuánto se parecen los rostros y cada característica de la ficha frente a lo que se
+estimó en la cámara, con el contexto de fecha y lugar. No se muestra un porcentaje de
+identidad: un número único —«93 % es Carlos»— sugiere una certeza que el sistema no tiene. El
+parecido facial se presenta como una medida entre dos rostros, y el resultado se llama
+prioridad de revisión.
 """
 from nicegui import ui
+from components.face_comparison import FaceComparison, candidate_sides
 from components.layout import notify_action
-from components.person_profile import InfoPair
 from components.status_badge import StatusBadge
 from models.candidate_match import SIGNAL_LABELS, STATE_LABELS
-from services.cases_service import get_case
-from services.search_matching_service import operator_review, supervisor_review
+from services.search_matching_service import operator_review, priority_level, supervisor_review
 from services.users_service import can
 
 LEVEL_CLASSES = {'ALTA': 'signal-high', 'MEDIA': 'signal-medium',
@@ -28,45 +29,35 @@ def SignalGrid(candidate):
                 ui.label(LEVEL_LABELS.get(signal.level, signal.level)).classes(
                     'signal-level ' + LEVEL_CLASSES.get(signal.level, 'signal-none'))
                 ui.label(signal.detail).classes('signal-detail')
+
+
+def ContextNotices(candidate):
     if candidate.temporal_window == 'FUERA_DEL_RANGO_PRIORITARIO':
         ui.label('Detección anterior a la desaparición. Se conserva porque puede ayudar a reconstruir '
                  'la trayectoria previa, pero no es prioritaria.').classes('notice mt-2')
     if candidate.linked_to_distress_event:
-        ui.label(f'Asociado al evento de auxilio {candidate.event_id}. Es contexto del evento: no '
-                 'significa que esta persona sea la víctima.').classes('notice mt-2')
+        with ui.row().classes('notice mt-2 items-center justify-between'):
+            ui.label(f'Asociado al evento de auxilio {candidate.event_id}. Es contexto del evento: no '
+                     'significa que esta persona sea la víctima.').classes('flex-1')
+            if can('alerts.view'):
+                ui.button('Ver evidencia', icon='videocam',
+                          on_click=lambda: ui.navigate.to(f'/alerts?event_id={candidate.event_id}')) \
+                    .props('flat dense no-caps')
 
 
 def CandidateReview(candidate, on_change=None, supervising=False):
     """Un candidato con sus dos lados y las acciones que el rol permite."""
-    case = get_case(candidate.case_id)
     with ui.row().classes('items-center justify-between w-full mb-3'):
         with ui.column().classes('gap-1'):
             ui.label(candidate.outcome).classes('text-lg font-medium')
             ui.label(f'{candidate.candidate_match_id} / {candidate.case_id}').classes('mono muted')
         StatusBadge(STATE_LABELS.get(candidate.status, candidate.status))
 
-    with ui.element('div').classes('comparison-images w-full'):
-        with ui.column().classes('gap-0'):
-            ui.label('Ficha de búsqueda').classes('comparison-label')
-            photo = case.person.photos[0] if case and case.person.photos else '/assets/demo/person-1.svg'
-            ui.image(photo).props('fit=contain')
-        with ui.column().classes('gap-0'):
-            ui.label('Detección de cámara').classes('comparison-label')
-            ui.image(candidate.face_image_path or '/assets/demo/capture.svg').props('fit=contain')
-
-    with ui.element('div').classes('field-grid my-3'):
-        if case:
-            InfoPair('Nombre en la ficha', case.person.name)
-            InfoPair('Folio', case.id)
-            InfoPair('Fecha de desaparición', case.missing_date)
-            InfoPair('Último lugar conocido', case.location)
-        InfoPair('Cámara', candidate.camera_id)
-        InfoPair('Fecha y hora de la detección', candidate.timestamp)
-        InfoPair('Ubicación', candidate.location or '—')
-
-    SignalGrid(candidate)
-    ui.label('IDENTIDAD NO CONFIRMADA. El sistema propone a quién revisar; no afirma quién es. '
-             'La información es interna y no se comunica a terceros.').classes('notice mt-3')
+    ficha, capture = candidate_sides(candidate)
+    FaceComparison(ficha, capture, candidate.signals, priority=priority_level(candidate.relevance_score))
+    ContextNotices(candidate)
+    with ui.expansion('Detalle de cada señal').classes('w-full mt-2'):
+        SignalGrid(candidate)
 
     with ui.row().classes('gap-2 mt-4 flex-wrap'):
         if supervising and can('matches.supervise') and candidate.status == 'OPERATOR_ACCEPTED_FOR_REVIEW':

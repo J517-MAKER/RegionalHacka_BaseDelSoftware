@@ -67,7 +67,8 @@ def project_path(path):
         return Path(path).as_posix()
 
 
-def create_evidence(voice_event, risk, samples, started_at, ended_at, sample_rate=None, actor='Sistema'):
+def create_evidence(voice_event, risk, samples, started_at, ended_at, sample_rate=None, actor='Sistema',
+                    trigger_timestamp=''):
     """Called by the detection pipeline; evidence is never created by hand from the interface."""
     event_id = next_event_id()
     path, digest, duration = write_audio(event_id, samples, sample_rate)
@@ -80,7 +81,7 @@ def create_evidence(voice_event, risk, samples, started_at, ended_at, sample_rat
         transcript_original=voice_event.text_original, transcript_normalized=voice_event.text_normalized,
         transcript_segments=(voice_event.recognition_metadata or {}).get('segments', []),
         semantic_analysis=semantic.model_dump(), acoustic_analysis=asdict(acoustic), assessment=risk,
-        integrity_hash=digest, voice_event_id=voice_event.id)
+        integrity_hash=digest, voice_event_id=voice_event.id, trigger_timestamp=trigger_timestamp)
     store.evidence.insert(0, evidence)
     voice_event.evidence_id = event_id
     store.audit(actor, 'Evidencia',
@@ -110,6 +111,16 @@ def verify_integrity(event):
     if not event.audio_file or not path.exists() or not event.integrity_hash:
         return False
     return file_hash(path) == event.integrity_hash
+
+
+def verify_video_integrity(event, video_file=None, expected=None):
+    """Lo mismo para el clip: True sólo si el MP4 sigue idéntico al que se escribió."""
+    video_file = video_file or event.video_file
+    expected = expected or event.video_integrity_hash
+    if not video_file or not expected:
+        return False
+    path = config.BASE_DIR / video_file
+    return path.exists() and file_hash(path) == expected
 
 
 def register_playback(event_id):
@@ -196,17 +207,35 @@ def resolve_deletion(request_id, approve, notes=''):
     return request
 
 
-def attach_video_evidence(event_id, video_path, start_timestamp, end_timestamp):
-    """Integration point for the camera module. Audio and video share the same event_id."""
+def attach_video_evidence(event_id, video_path, start_timestamp, end_timestamp, integrity_hash=None,
+                          has_audio=False, camera_id=None, angle=False):
+    """Integration point for the camera module. Audio and video share the same event_id.
+
+    `angle` registra un ángulo adicional (otra cámara del equipo en el mismo instante) sin
+    reemplazar el clip principal.
+    """
     event = require_event(event_id)
     path = Path(video_path)
     if not path.is_absolute():
         path = config.BASE_DIR / path
     if not path.exists():
         raise ValueError('No se encontró el archivo de video indicado.')
+    digest = integrity_hash or file_hash(path)
+    if angle:
+        event.extra_videos.append({'camera_id': camera_id or '', 'file': project_path(path),
+                                   'integrity_hash': digest, 'has_audio': has_audio,
+                                   'start': start_timestamp, 'end': end_timestamp})
+        store.audit('Sistema', 'Evidencia', f'Ángulo adicional de {camera_id} asociado a {event.event_id} '
+                                            f'(SHA-256 {digest[:12]}).',
+                    camera_id=camera_id or event.camera_id, result='ATTACHED')
+        return event
     event.video_file = project_path(path)
     event.video_start_timestamp, event.video_end_timestamp = start_timestamp, end_timestamp
+    event.video_integrity_hash, event.video_has_audio = digest, has_audio
+    event.video_camera_id = camera_id or event.camera_id
     event.video_status = 'ATTACHED'
-    store.audit('Sistema', 'Evidencia', f'Video asociado a {event.event_id}.',
-                camera_id=event.camera_id, result='ATTACHED')
+    store.audit('Sistema', 'Evidencia',
+                f'Video{" con audio" if has_audio else ""} asociado a {event.event_id} '
+                f'(SHA-256 {digest[:12]}).',
+                camera_id=event.video_camera_id, result='ATTACHED')
     return event

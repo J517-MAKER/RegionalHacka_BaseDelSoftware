@@ -10,10 +10,14 @@ def get_camera(camera_id):
 
 
 def get_nearby_cameras(camera_id, limit=3):
+    """Las cámaras más cercanas por distancia real, igual que las que une el mapa."""
+    from services.geo_service import camera_position, haversine_km
     origin = get_camera(camera_id)
     if not origin:
         return []
-    return sorted((c for c in store.cameras if c.id!=camera_id), key=lambda c: (c.x-origin.x)**2+(c.y-origin.y)**2)[:limit]
+    here = camera_position(origin)
+    return sorted((c for c in store.cameras if c.id != camera_id),
+                  key=lambda c: haversine_km(here, camera_position(c)))[:limit]
 
 
 def get_camera_events(camera_id):

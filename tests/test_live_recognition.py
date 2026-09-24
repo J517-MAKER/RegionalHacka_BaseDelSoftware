@@ -138,9 +138,23 @@ class LiveRecognitionTest(unittest.TestCase):
         self.assertEqual((detection.case_id, detection.camera_id), (self.case.id, 'CAM-003'))
 
     def test_start_explains_camera_and_model_problems(self):
-        with patch.object(face_engine, 'load', side_effect=face_engine.FaceEngineUnavailable('Falta el modelo facial.')):
-            with self.assertRaisesRegex(LiveRecognitionError, 'Falta el modelo facial'):
-                self.live.start()
+        # Sin modelo facial la cámara NO se queda apagada: transmite y graba su anillo de
+        # evidencia, y el motivo por el que no reconoce rostros queda a la vista.
+        with patch.object(face_engine, 'load', side_effect=face_engine.FaceEngineUnavailable('Falta el modelo facial.')), \
+                patch('cv2.VideoCapture', return_value=FakeCamera()):
+            self.live.start('CAM-003', 0, 'Operador01')
+            deadline = time.monotonic() + 5
+            while (self.live.recognition != 'NO_DISPONIBLE' or not self.live.ring.frames) \
+                    and time.monotonic() < deadline:
+                time.sleep(.05)
+            self.assertTrue(self.live.running)
+            self.assertEqual(self.live.status, 'EN VIVO')
+            self.assertEqual(self.live.recognition, 'NO_DISPONIBLE')
+            self.assertIn('Falta el modelo facial', self.live.recognition_error)
+            self.assertTrue(self.live.ring.frames)  # la evidencia se sigue grabando
+            self.assertEqual(self.live.faces, [])
+            self.live.stop('Operador01')
+        self.assertEqual(self.live.ring.frames, [])  # nada de lo visto sobrevive a la sesión
         closed = FakeCamera(working=False)
         with patch.object(face_engine, 'load'), patch('cv2.VideoCapture', return_value=closed):
             with self.assertRaisesRegex(LiveRecognitionError, 'No fue posible abrir la cámara'):

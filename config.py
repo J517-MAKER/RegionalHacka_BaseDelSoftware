@@ -49,14 +49,36 @@ VOICE_RELEVANT_HISTORY_LIMIT = 100
 EVIDENCE_DIR = BASE_DIR / 'evidence'
 EVIDENCE_AUDIO_DIR = EVIDENCE_DIR / 'audio'
 EVIDENCE_VIDEO_DIR = EVIDENCE_DIR / 'video'
-EVIDENCE_PRE_SECONDS = 10
-EVIDENCE_POST_SECONDS = 10
-# Ring buffer: pre-roll + window + post-roll with margin. Nothing older is kept.
-AUDIO_RING_SECONDS = EVIDENCE_PRE_SECONDS + AUDIO_WINDOW_SECONDS + EVIDENCE_POST_SECONDS + 15
+# El clip de evidencia (video, audio y fotos) abarca estos segundos antes y después del
+# instante en que se dijo la frase de auxilio: lo justo para que una persona entienda el contexto.
+EVIDENCE_PRE_SECONDS = int(os.getenv('NEXO_EVIDENCE_PRE_SECONDS', '5'))
+EVIDENCE_POST_SECONDS = int(os.getenv('NEXO_EVIDENCE_POST_SECONDS', '5'))
+# Ring buffer: pre-roll + window + post-roll, plus room for a slow transcription. Nothing
+# older is kept.
+AUDIO_RING_SECONDS = EVIDENCE_PRE_SECONDS + AUDIO_WINDOW_SECONDS + EVIDENCE_POST_SECONDS + 30
 DEFAULT_CAMERA_ID = os.getenv('NEXO_CAMERA', 'CAM-008')
 SECOND_CAMERA_ID = os.getenv('NEXO_CAMERA_2', 'CAM-007')
 # Celular enlazado con Enlace Móvil de Windows (cámara conectada).
 THIRD_CAMERA_ID = os.getenv('NEXO_CAMERA_3', 'CAM-004')
+
+
+def parse_latlng(value):
+    """'25.6775,-100.2597' -> (25.6775, -100.2597); None si el texto no es una coordenada válida."""
+    try:
+        lat, lng = (float(part) for part in str(value).split(','))
+    except (TypeError, ValueError):
+        return None
+    return (lat, lng) if -90 <= lat <= 90 and -180 <= lng <= 180 else None
+
+
+# Dónde está físicamente cada cámara del equipo. Por defecto, tres puntos a pocos pasos entre sí
+# dentro del Tec de Nuevo León, para que caminar de una a otra se vea como un trayecto en el
+# mapa. Cada equipo pone aquí (o en .env) las coordenadas reales de donde instala sus cámaras.
+PHYSICAL_CAMERA_POSITIONS = {
+    DEFAULT_CAMERA_ID: parse_latlng(os.getenv('NEXO_CAMERA_LATLNG', '25.67750,-100.25970')),
+    SECOND_CAMERA_ID: parse_latlng(os.getenv('NEXO_CAMERA_2_LATLNG', '25.67790,-100.25860')),
+    THIRD_CAMERA_ID: parse_latlng(os.getenv('NEXO_CAMERA_3_LATLNG', '25.67860,-100.25730')),
+}
 
 # Importación de alertas de búsqueda: archivos temporales, nunca evidencia.
 # Base de datos PostgreSQL (docker-compose.yml). Opcional: sin contenedor, NEXO trabaja en memoria.
@@ -100,15 +122,31 @@ LIVE_ANALYSIS_INTERVAL_SECONDS = .15
 # Se consulta a menudo para que el fragmento conservado tenga fluidez suficiente.
 CAMERA_STREAM_POLL_SECONDS = 0.2
 CAMERA_STALE_SECONDS = 90
-# Ventana de video conservada alrededor de un evento. Fuera de ella el anillo se sobrescribe.
-VIDEO_PRE_EVENT_SECONDS = 10
-VIDEO_POST_EVENT_SECONDS = 10
-VIDEO_RING_SECONDS = VIDEO_PRE_EVENT_SECONDS + VIDEO_POST_EVENT_SECONDS + 10
-VIDEO_RING_FPS = 5
+# Ventana de video conservada alrededor de un evento: la misma que la del audio, para que el
+# clip se vea y se escuche completo. Fuera de ella el anillo se sobrescribe.
+VIDEO_PRE_EVENT_SECONDS = EVIDENCE_PRE_SECONDS
+VIDEO_POST_EVENT_SECONDS = EVIDENCE_POST_SECONDS
+# El análisis de voz llega con algunos segundos de retraso respecto del grito: el anillo
+# guarda de sobra para que el "antes" siga ahí cuando se pide.
+VIDEO_RING_SECONDS = VIDEO_PRE_EVENT_SECONDS + VIDEO_POST_EVENT_SECONDS + 30
+VIDEO_RING_FPS = 12
+VIDEO_RING_JPEG_QUALITY = 80
 # Margen al buscar el fotograma más próximo a cada instante pedido.
 EVENT_FRAME_TOLERANCE_SECONDS = 1.0
-# Un solo fotograma puede salir borroso o de perfil: se toman varios alrededor del evento.
-EVENT_FRAME_OFFSETS_SECONDS = (0, 1, 2, 3, 5)
+# Un solo fotograma puede salir borroso o de perfil: se toman varios alrededor del evento,
+# también antes de la frase, cuando la persona quizá todavía miraba a la cámara.
+EVENT_FRAME_OFFSETS_SECONDS = (-2, 0, 1, 2, 4)
+# Si el modelo facial no carga, la cámara sigue grabando y se reintenta cada tanto.
+FACE_MODEL_RETRY_SECONDS = 60
+
+# ------------------------------------------------ seguimiento de las personas de un evento
+# Tras una posible solicitud de auxilio, las cámaras del equipo buscan por sí solas a las
+# personas que se vieron en el evento durante un tiempo corto (provisional). Si una persona
+# confirma el seguimiento, se amplía; si marca falso positivo, se detiene.
+EVENT_TRACKING_MINUTES = int(os.getenv('NEXO_EVENT_TRACKING_MINUTES', '60'))
+EVENT_TRACKING_CONFIRMED_HOURS = int(os.getenv('NEXO_EVENT_TRACKING_CONFIRMED_HOURS', '12'))
+# Una reaparición por persona y cámara en cada ventana, para no llenar el trayecto de repeticiones.
+TRACK_SIGHTING_COOLDOWN_SECONDS = 30
 
 # ------------------------------------------------------- motor de búsqueda multimodal
 # La hora de desaparición marca el inicio de la ventana prioritaria; nada se descarta por tiempo.
@@ -117,6 +155,13 @@ SEARCH_PRIORITY_WINDOW_DAYS = 7
 # Distancia en el plano de demostración; la cercanía prioriza, nunca excluye.
 SEARCH_NEAR_DISTANCE = 18.0
 SEARCH_FAR_DISTANCE = 45.0
+# Distancias reales (km) al último lugar conocido de la ficha.
+SEARCH_NEAR_KM = 5.0
+SEARCH_FAR_KM = 60.0
+# Velocidades para juzgar si un desplazamiento es posible en el tiempo transcurrido: a pie,
+# en vehículo; más rápido que eso, uno de los dos puntos probablemente es un falso positivo.
+WALKING_MAX_KMH = 7.0
+VEHICLE_MAX_KMH = 130.0
 # Continuidad entre cámaras relacionadas: dos apariciones compatibles dentro de esta ventana.
 SEARCH_ROUTE_WINDOW_MINUTES = 20
 # Prioridad de revisión, no probabilidad de identidad.

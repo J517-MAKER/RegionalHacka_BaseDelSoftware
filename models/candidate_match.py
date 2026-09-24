@@ -19,8 +19,12 @@ STATE_LABELS = {'AI_CANDIDATE': 'Candidato generado',
 # Niveles cualitativos. NO_EVALUABLE no penaliza: significa que no había con qué comparar.
 SIGNAL_LEVELS = ('ALTA', 'MEDIA', 'BAJA', 'NO_EVALUABLE')
 SIGNAL_LABELS = {'face': 'Similitud facial', 'temporal': 'Compatibilidad temporal',
-                 'geographic': 'Compatibilidad geográfica', 'appearance': 'Apariencia',
+                 'geographic': 'Compatibilidad geográfica', 'appearance': 'Rasgos visibles',
                  'route': 'Continuidad de ruta'}
+# De dónde salió la captura comparada.
+CAPTURE_KINDS = {'EVENTO': 'Persona vista en un evento de auxilio',
+                 'DETECCION': 'Detección de una cámara',
+                 'CAPTURA_BD': 'Captura registrada en la base de datos'}
 
 
 @dataclass
@@ -46,6 +50,10 @@ class CandidateMatch:
     face_image_path: str = ''
 
     signals: dict = field(default_factory=dict)
+    # Rasgos estimados de la captura (edad aparente, color de la ropa) y su origen, para la
+    # tabla de características frente a lo que declara la ficha.
+    capture_kind: str = 'DETECCION'
+    capture_attributes: dict = field(default_factory=dict)
     # Orden de revisión, no probabilidad de que sea la persona.
     relevance_score: float = 0.0
     outcome: str = 'CANDIDATO'

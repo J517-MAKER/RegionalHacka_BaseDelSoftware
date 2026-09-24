@@ -34,13 +34,30 @@ class EvidenceEvent:
     reviewed_at: str | None = None
     review_notes: str = ''
 
-    # Reserved for the camera module; audio and video share the same event_id.
+    # Instante en que se escuchó la frase: el clip abarca unos segundos antes y después.
+    trigger_timestamp: str = ''
+
+    # Camera module; audio and video share the same event_id.
     video_file: str | None = None
     video_start_timestamp: str | None = None
     video_end_timestamp: str | None = None
     video_status: str = 'PENDING_INTEGRATION'
+    # SHA-256 del clip al escribirlo: el video también debe poder verificarse.
+    video_integrity_hash: str = ''
+    # El clip lleva el mismo audio del evento, sincronizado con la imagen.
+    video_has_audio: bool = False
+    # Cámara de la que salió el clip (puede ser otra si la del micrófono no transmitía).
+    video_camera_id: str = ''
+    # Otros ángulos del mismo instante: [{'camera_id', 'file', 'integrity_hash'}].
+    extra_videos: list = field(default_factory=list)
     # Faces in view of the same camera when the event was created (live recognition).
     face_captures: list = field(default_factory=list)
+
+    # Seguimiento de las personas del evento en las demás cámaras del equipo. Arranca solo y
+    # por poco tiempo (PROVISIONAL); una persona lo confirma o lo detiene.
+    # SIN_SEGUIMIENTO · PROVISIONAL · CONFIRMADO · DETENIDO
+    tracking_status: str = 'SIN_SEGUIMIENTO'
+    tracking_until: str = ''
 
     integrity_hash: str = ''
     voice_event_id: str = ''

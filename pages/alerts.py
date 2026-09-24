@@ -1,5 +1,6 @@
 from pathlib import Path
 from nicegui import ui
+import config
 from components.layout import PageLayout,notify_action,guard_page
 from components.alert_table import EvidenceTable
 from components.person_profile import InfoPair
@@ -9,7 +10,9 @@ from services.cameras_service import get_camera, get_nearby_cameras
 from services.event_frames_service import get_event_candidates, get_event_frames
 from services.face_engine import display_level
 from services.evidence_service import (get_evidence, get_event, register_playback,
-                                       request_deletion, review_event, verify_integrity)
+                                       request_deletion, review_event, verify_integrity,
+                                       verify_video_integrity)
+from services.search_matching_service import get_candidates
 from services import store
 from services.users_service import can
 
@@ -18,15 +21,34 @@ REVIEW_BUTTONS = [('CONFIRMAR PARA ATENCIÓN', 'CONFIRMADO_PARA_ATENCION', 'Even
                   ('ENVIAR A REVISIÓN', 'EN_REVISION', 'Evento enviado a revisión.')]
 
 
+def media_url(kind, path):
+    """URL pública (sólo lectura) de un archivo de evidencia."""
+    return f'/evidence/{kind}/{Path(path).name}'
+
+
+def offset_label(offset):
+    return 'momento de la frase' if offset == 0 else f'{offset:+g} s'
+
+
+def show_photo(source, caption):
+    with ui.dialog() as dialog, ui.card().classes('p-3 gap-2 max-w-[900px]'):
+        ui.image(source).classes('w-[860px] max-w-full').props('fit=contain')
+        with ui.row().classes('items-center justify-between w-full'):
+            ui.label(caption).classes('text-xs muted')
+            ui.button('Cerrar', on_click=dialog.close).props('flat dense no-caps')
+    dialog.open()
+
+
 @ui.page('/alerts')
-def alerts_page(status:str=''):
+def alerts_page(status:str='', event_id:str=''):
     if not guard_page('/alerts', 'alerts.view'):
         return
     with PageLayout('/alerts', 'Revisión de evidencia',
-                    'Eventos de voz para evaluación de una autoridad. La detección no confirma la existencia de un delito.'):
+                    'Eventos de voz con su clip de video, audio y fotos para evaluación de una autoridad. '
+                    'La detección no confirma la existencia de un delito.'):
         selected = {'id': None}
 
-        with ui.right_drawer(value=False).props('width=460 bordered overlay').classes('p-0') as drawer:
+        with ui.right_drawer(value=False).props('width=640 bordered overlay').classes('p-0') as drawer:
             @ui.refreshable
             def detail():
                 event = get_event(selected['id'])
@@ -39,59 +61,106 @@ def alerts_page(status:str=''):
                 with ui.column().classes('p-5 w-full gap-3'):
                     StatusBadge(event.review_status)
                     ui.label(f'{event.camera_id} — {event.location}').classes('text-sm')
-                    ui.label(event.created_at).classes('text-xs muted')
+                    ui.label(f'Registrado {event.created_at}'
+                             + (f' · frase escuchada a las {event.trigger_timestamp[11:]}'
+                                if event.trigger_timestamp else '')).classes('text-xs muted')
                     InfoPair('Clasificación IA', event.classification)
                     InfoPair('Prioridad', event.priority)
                     ui.label('Transcripción').classes('section-title mt-2')
                     ui.label(f'“{event.transcript_original}”').classes('text-lg p-4 bg-[#f5f7f8] w-full')
 
-                    ui.label('EVIDENCIA').classes('eyebrow mt-3')
+                    # Video y fotos del mismo event_id: quien revisa necesita ver qué pasó, no
+                    # sólo escucharlo. Lo que no se pudo capturar se declara, nunca se inventa.
+                    ui.label(f'CLIP DE EVIDENCIA · {config.EVIDENCE_PRE_SECONDS} S ANTES Y '
+                             f'{config.EVIDENCE_POST_SECONDS} S DESPUÉS DE LA FRASE').classes('eyebrow mt-3')
+                    if event.video_status == 'ATTACHED' and event.video_file:
+                        source = media_url('video', event.video_file)
+                        video = ui.video(source).classes('w-full rounded-lg bg-black').mark('evidence-video')
+                        video.on('play', lambda: notify_action(lambda: register_playback(event.event_id),
+                                                               'Reproducción registrada en la bitácora.'))
+                        InfoPair('Clip', f'{"Video con audio" if event.video_has_audio else "Video"} · '
+                                         f'{event.video_camera_id or event.camera_id} · '
+                                         f'{event.video_start_timestamp} → {event.video_end_timestamp}')
+                        if event.video_camera_id and event.video_camera_id != event.camera_id:
+                            ui.label(f'La cámara de {event.camera_id} no transmitía; el video es de '
+                                     f'{event.video_camera_id}, otra cámara del equipo en vivo.').classes('notice')
+                        InfoPair('Integridad del video', '✓ Clip original verificado'
+                                 if verify_video_integrity(event) else '⚠ No fue posible verificar el clip original')
+                        if event.video_integrity_hash:
+                            InfoPair('SHA-256 del video', event.video_integrity_hash[:32] + '…')
+                        # Poder abrirlo fuera del navegador es parte de poder verificarlo.
+                        ui.link('Descargar el clip original (MP4)', source).props('download').classes('text-[11px]')
+                        if event.extra_videos:
+                            ui.label('OTROS ÁNGULOS DEL MISMO INSTANTE').classes('eyebrow mt-2')
+                            for extra in event.extra_videos:
+                                with ui.column().classes('w-full gap-1'):
+                                    ui.video(media_url('video', extra['file'])).classes('w-full rounded-lg bg-black')
+                                    ui.label(f'{extra["camera_id"]} · '
+                                             + ('✓ verificado' if verify_video_integrity(
+                                                 event, extra['file'], extra['integrity_hash'])
+                                                else '⚠ sin verificar')).classes('text-[11px] muted')
+                    else:
+                        InfoPair('Video', 'Pendiente de integración: ninguna cámara del equipo entregó '
+                                          'imagen en ese momento.')
+
+                    frames = get_event_frames(event.event_id)
+                    if frames:
+                        stored = [f for f in frames if f.image_path]
+                        ui.label(f'FOTOS DEL EVENTO · {len(stored)} DE {len(frames)}').classes('eyebrow mt-3')
+                        if stored:
+                            with ui.row().classes('gap-2 flex-wrap'):
+                                for frame in stored:
+                                    url = media_url('frames', frame.image_path)
+                                    caption = f'{frame.frame_id} · {frame.camera_id} · {frame.timestamp} · ' \
+                                              f'{offset_label(frame.offset_seconds)}'
+                                    with ui.column().classes('gap-1 items-center cursor-pointer') \
+                                            .on('click', lambda u=url, c=caption: show_photo(u, c)):
+                                        ui.image(url).classes('w-28 h-20 rounded').props('fit=cover')
+                                        ui.label(offset_label(frame.offset_seconds)).classes('text-[10px] muted')
+                        pending = [f for f in frames if not f.image_path]
+                        if pending:
+                            ui.label(f'{len(pending)} foto(s) no pudieron capturarse: '
+                                     + (pending[0].note or '')).classes('text-[10px] muted')
+
+                    ui.label('AUDIO ORIGINAL').classes('eyebrow mt-3')
                     player = ui.audio(f'/evidence/audio/{event.event_id}.wav').classes('w-full')
                     player.on('play', lambda: notify_action(lambda: register_playback(event.event_id),
                                                             'Reproducción registrada en la bitácora.'))
-                    InfoPair('Duración', f'{event.audio_duration:.0f} segundos')
+                    InfoPair('Duración', f'{event.audio_duration:.0f} segundos · '
+                                         f'{event.audio_start_timestamp[11:]} → {event.audio_end_timestamp[11:]}')
                     InfoPair('Integridad', '✓ Archivo original verificado' if verify_integrity(event)
                              else '⚠ No fue posible verificar el archivo original')
                     InfoPair('SHA-256', event.integrity_hash[:32] + '…')
 
-                    # Video y fotogramas del mismo event_id: quien revisa necesita ver qué
-                    # pasó, no sólo escucharlo. Lo que no se pudo capturar se declara.
-                    if event.video_status == 'ATTACHED' and event.video_file:
-                        source = f'/evidence/video/{Path(event.video_file).name}'
-                        ui.video(source).classes('w-full')
-                        InfoPair('Video', f'{event.video_start_timestamp} → {event.video_end_timestamp}')
-                        # Poder abrirlo fuera del navegador es parte de poder verificarlo.
-                        ui.link('Descargar el fragmento original', source).props('download').classes('text-[11px]')
-                    else:
-                        InfoPair('Video', 'Pendiente de integración: la cámara no entregó imagen '
-                                          'en ese momento.')
-                    frames = get_event_frames(event.event_id)
-                    if frames:
-                        stored = [f for f in frames if f.image_path]
-                        ui.label(f'FOTOGRAMAS DEL EVENTO · {len(stored)} DE {len(frames)}').classes('eyebrow mt-3')
-                        if stored:
-                            with ui.row().classes('gap-2 flex-wrap'):
-                                for frame in stored:
-                                    with ui.column().classes('gap-1 items-center'):
-                                        ui.image(f'/evidence/frames/{Path(frame.image_path).name}') \
-                                            .classes('w-24 h-20').props('fit=cover')
-                                        ui.label(f'+{frame.offset_seconds:g} s').classes('text-[10px] muted')
-                        pending = [f for f in frames if not f.image_path]
-                        if pending:
-                            ui.label(f'{len(pending)} fotograma(s) no pudieron capturarse: '
-                                     + (pending[0].note or '')).classes('text-[10px] muted')
                     candidates = get_event_candidates(event.event_id)
                     if candidates:
                         ui.label('PERSONAS EN EL EVENTO').classes('eyebrow mt-3')
+                        from services.tracking_service import get_track_sightings
                         with ui.row().classes('gap-3 flex-wrap'):
                             for candidate in candidates:
                                 with ui.column().classes('gap-1 items-center'):
                                     if candidate.face_image_path:
-                                        ui.image(f'/evidence/frames/{Path(candidate.face_image_path).name}') \
-                                            .classes('w-20 h-24').props('fit=cover')
+                                        url = media_url('frames', candidate.face_image_path)
+                                        ui.image(url).classes('w-20 h-24 rounded cursor-pointer').props('fit=cover') \
+                                            .on('click', lambda u=url, c=candidate: show_photo(
+                                                u, f'{c.person_track_id} · {c.camera_id} · {c.timestamp}'))
                                     ui.label(candidate.person_track_id).classes('text-[10px] mono')
+                                    seen = get_track_sightings(candidate.candidate_id)
+                                    if seen and can('tracking.view'):
+                                        ui.button(f'Trayecto ({len(seen)})', icon='route',
+                                                  on_click=lambda c=candidate: ui.navigate.to(
+                                                      f'/tracking?event_id={c.event_id}&track={c.candidate_id}')) \
+                                            .props('flat dense no-caps size=sm')
                         ui.label('Personas vistas durante el evento. La asociación no indica que alguna '
                                  'sea la persona que pidió ayuda.').classes('text-[10px] muted')
+                    matches = get_candidates(event_id=event.event_id)
+                    if matches:
+                        from components.face_comparison import CandidateSummaryRow
+                        ui.label('COINCIDENCIAS CON FICHAS DE BÚSQUEDA').classes('eyebrow mt-3')
+                        for candidate in matches:
+                            CandidateSummaryRow(candidate)
+                        ui.label('Parecido con fichas registradas: pistas para revisión humana, nunca una '
+                                 'identificación.').classes('text-[10px] muted')
                     if event.face_captures:
                         ui.label('Rostros en cámara al momento del evento').classes('section-title mt-2')
                         with ui.row().classes('gap-3 flex-wrap'):
@@ -144,10 +213,13 @@ def alerts_page(status:str=''):
                                  'y la autorización de eliminación al supervisor.').classes('text-xs muted mt-3')
                     alert = next((a for a in store.alerts if a.voice_event_id == event.voice_event_id), None)
                     if alert and can('tracking.control'):
-                        ui.button('Iniciar seguimiento', icon='route',
-                                  on_click=lambda: notify_action(lambda: start_alert_tracking(alert.id),
-                                                                 'Seguimiento solicitado. Módulo de seguimiento pendiente de integración.',
-                                                                 changed)).props('unelevated no-caps')
+                        def follow():
+                            result = notify_action(lambda: start_alert_tracking(alert.id),
+                                                   'Seguimiento iniciado: las cámaras del equipo buscan a las '
+                                                   'personas del evento.', changed)
+                            if result is not None:
+                                ui.navigate.to(f'/tracking?event_id={event.event_id}')
+                        ui.button('Iniciar seguimiento', icon='route', on_click=follow).props('unelevated no-caps')
                     if event.reviewed_by:
                         ui.label(f'{event.reviewed_by} · {event.reviewed_at}').classes('text-xs muted')
             detail()
@@ -189,3 +261,6 @@ def alerts_page(status:str=''):
             ui.button('Actualizar', icon='refresh', on_click=lambda: table.refresh()).props('outline no-caps')
         table()
         ui.timer(10, table.refresh)
+        # Enlace directo desde el aviso del encabezado: el evento se abre sin buscarlo en la tabla.
+        if event_id and get_event(event_id):
+            select(event_id)

@@ -65,6 +65,15 @@ def model_downloaded():
     return folder.is_dir() and any(folder.glob('*.onnx'))
 
 
+def ready():
+    """True cuando se puede analizar sin descargar nada: el modelo ya está en memoria o en disco.
+
+    Los procesos de fondo (cotejo automático con fichas, perfiles) lo consultan antes de
+    calcular huellas, para no disparar la descarga de ~330 MB en un momento inesperado.
+    """
+    return _app is not None or (installed() and model_downloaded())
+
+
 def status():
     """Diagnostics for the interface and the command line; it never loads the model."""
     return {'engine': ENGINE_NAME, 'installed': installed(), 'model_downloaded': model_downloaded(),

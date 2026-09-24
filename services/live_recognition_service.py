@@ -14,6 +14,7 @@ import config
 from models.detection import Detection
 from models.match import Match
 from services import face_engine, store
+from services.video_ring import VideoRing
 
 
 class LiveRecognitionError(ValueError):
@@ -45,6 +46,9 @@ def face_crop_data_url(frame, bbox, margin=.35, height=320, mirrored=True):
     return 'data:image/jpeg;base64,' + base64.b64encode(data.tobytes()).decode()
 
 
+TRACK_COLOR = (200, 70, 160)  # BGR: morado, el del seguimiento en el mapa
+
+
 def draw_face(image, face):
     """Box plus a filled label: folio, name and level, or «Sin coincidencia».
 
@@ -55,6 +59,12 @@ def draw_face(image, face):
     color = face_engine.LEVEL_COLORS[face['level']]
     label = (f'{face["case_id"]} {ascii_label(face["name"])} {face["level"]}'
              if face['level'] else 'Sin coincidencia')
+    if face.get('track_level'):
+        # Persona vista en un evento de auxilio que reaparece: se distingue en morado.
+        if not face['level']:
+            color, label = TRACK_COLOR, f'SEGUIMIENTO {face["track_label"]}'
+        else:
+            label += ' / SEGUIMIENTO'
     cv2.rectangle(image, (x1, y1), (x2, y2), color, 2)
     # Sized for the compact 480-px view of the page.
     (width, height), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, .6, 1)
@@ -189,7 +199,17 @@ class LiveRecognition:
         self.fps = 0.0
         self.faces = []  # latest analysis, most prominent face first
         self.gallery = []  # (case, embedding) for every usable photo of the cases being searched
+        self.watchlist = []  # (persona de un evento, huella) con seguimiento vigente
         self.detections = []  # detections created from the webcam, newest first
+        # El reconocimiento facial es una capa sobre la transmisión, no su requisito: sin el
+        # modelo la cámara sigue en vivo y grabando su anillo de evidencia.
+        # INACTIVO · CARGANDO · ACTIVO · NO_DISPONIBLE
+        self.recognition = 'INACTIVO'
+        self.recognition_error = None
+        self._model_retry_at = 0.0
+        # Los últimos segundos de video, tal como los ve la cámara (sin espejo), para poder
+        # reconstruir el antes y el después de una posible solicitud de auxilio.
+        self.ring = VideoRing()
         self._frame = None
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -224,10 +244,8 @@ class LiveRecognition:
             self._start(camera_id, camera_index, actor)
 
     def _start(self, camera_id, camera_index, actor):
-        try:
-            face_engine.load()
-        except face_engine.FaceEngineUnavailable as error:
-            raise LiveRecognitionError(str(error)) from error
+        # No se espera al modelo facial: la cámara transmite y graba evidencia desde ya, y el
+        # modelo se carga aparte, en el hilo de análisis (la primera vez puede descargarse).
         import cv2
         camera_id = camera_id or self.camera_id
         index, name = self._resolve_index(camera_index)
@@ -264,13 +282,15 @@ class LiveRecognition:
         with self._lock:
             self._frame, self.faces = None, []
         self.error, self.dark, self.fps, self._gallery_at = None, False, 0.0, 0.0
-        self.running, self.status = True, 'RECONOCIENDO'
+        self.recognition, self.recognition_error, self._model_retry_at = 'CARGANDO', None, 0.0
+        self.ring.clear()
+        self.running, self.status = True, 'EN VIVO'
         self._threads = [threading.Thread(target=self._capture_loop, name=f'live-capture-{self.camera_id}', daemon=True),
                          threading.Thread(target=self._analysis_loop, name=f'live-rec-{self.camera_id}', daemon=True)]
         for thread in self._threads:
             thread.start()
-        store.audit(actor, 'Cámara', f'Inició el reconocimiento facial en vivo en {self.camera_id}',
-                    camera_id=self.camera_id, result='RECONOCIENDO')
+        store.audit(actor, 'Cámara', f'Inició la transmisión en vivo de {self.camera_id}',
+                    camera_id=self.camera_id, result='EN VIVO')
 
     def stop(self, actor=None):
         if not self.running:
@@ -286,13 +306,26 @@ class LiveRecognition:
             capture.release()
         with self._lock:
             self._frame, self.faces = None, []  # nothing seen outlives the session
+        self.ring.clear()  # el video que ningún evento reclamó tampoco
         self.fps, self.dark, self.status = 0.0, False, 'DETENIDA'
-        store.audit(actor or self.actor, 'Cámara', f'Detuvo el reconocimiento facial en vivo en {self.camera_id}',
+        self.recognition = 'INACTIVO'
+        store.audit(actor or self.actor, 'Cámara', f'Detuvo la transmisión en vivo de {self.camera_id}',
                     camera_id=self.camera_id, result='DETENIDA')
+
+    @property
+    def live_status(self):
+        """Estado para mostrar cuando la cámara transmite: con o sin reconocimiento."""
+        if self.recognition == 'ACTIVO':
+            return 'RECONOCIENDO'
+        return 'EN VIVO'
 
     # ------------------------------------------------------------------ workers
     def _capture_loop(self):
-        """Keeps only the newest frame, so the analysis never works on a stale one."""
+        """Keeps only the newest frame, so the analysis never works on a stale one.
+
+        Además alimenta el anillo de evidencia a ritmo constante, con el cuadro tal como lo
+        entrega la cámara: la evidencia debe mostrar la escena como es, no en espejo.
+        """
         import cv2
         failures = 0
         while not self._stop.is_set():
@@ -306,13 +339,40 @@ class LiveRecognition:
                 time.sleep(.1)
                 continue
             if failures >= 30:
-                self.error, self.status = None, 'RECONOCIENDO'
+                self.error, self.status = None, self.live_status
             failures = 0
+            if self.ring.due():
+                self.ring.write(frame)
             with self._lock:
                 self._frame = cv2.flip(frame, 1) if self.mirror else frame
 
+    def _ensure_recognition(self):
+        """Carga el modelo facial sin interrumpir la transmisión. True cuando ya puede analizar.
+
+        Si el modelo falta o no carga, la cámara sigue en vivo y grabando; el motivo queda a la
+        vista y se vuelve a intentar cada FACE_MODEL_RETRY_SECONDS (por si alguien lo descarga).
+        """
+        if self.recognition == 'ACTIVO':
+            return True
+        if time.monotonic() < self._model_retry_at:
+            return False
+        self.recognition = 'CARGANDO'
+        try:
+            face_engine.load()
+        except face_engine.FaceEngineUnavailable as error:
+            self.recognition, self.recognition_error = 'NO_DISPONIBLE', str(error)
+            self._model_retry_at = time.monotonic() + config.FACE_MODEL_RETRY_SECONDS
+            return False
+        self.recognition, self.recognition_error = 'ACTIVO', None
+        if self.status == 'EN VIVO':
+            self.status = 'RECONOCIENDO'
+        return True
+
     def _analysis_loop(self):
         while not self._stop.is_set():
+            if not self._ensure_recognition():
+                self._stop.wait(1.0)
+                continue
             with self._lock:
                 frame = self._frame
             if frame is None:
@@ -332,6 +392,8 @@ class LiveRecognition:
             for face in faces:
                 if face['level']:
                     self._record(frame, face)
+                if face.get('track_level'):
+                    self._record_sighting(frame, face)
             elapsed = time.perf_counter() - started
             self.fps = 1 / max(elapsed, config.LIVE_ANALYSIS_INTERVAL_SECONDS)
             self._stop.wait(max(0.0, config.LIVE_ANALYSIS_INTERVAL_SECONDS - elapsed))
@@ -339,27 +401,56 @@ class LiveRecognition:
                 time.sleep(.01)
 
     def _refresh_gallery(self):
-        """New cases and photos are picked up within a few seconds, without restarting."""
+        """New cases and photos are picked up within a few seconds, without restarting.
+
+        También las personas de un evento de auxilio con seguimiento vigente: si reaparecen
+        frente a esta cámara, queda un punto más de su trayecto.
+        """
         if time.monotonic() - self._gallery_at < config.LIVE_GALLERY_REFRESH_SECONDS:
             return
         from services.facial_service import search_gallery
+        from services.tracking_service import watch_targets
         self.gallery = search_gallery()
+        self.watchlist = watch_targets()
         self._gallery_at = time.monotonic()
 
     def _identify(self, face):
-        """Best case for one face: its highest similarity over every reference photo."""
+        """Best case for one face: its highest similarity over every reference photo.
+
+        Por separado, la persona de un evento en seguimiento a la que más se parece: un rostro
+        puede ser a la vez parecido a una ficha y a alguien que estaba en un evento.
+        """
         best_case, best = None, 0.0
         for case, embedding in self.gallery:
             value = face_engine.similarity(face.embedding, embedding)
             if value > best:
                 best_case, best = case, value
         level = face_engine.level_of(best) if best_case else None
+        track, track_best = None, 0.0
+        for candidate, embedding in getattr(self, 'watchlist', ()):
+            value = face_engine.similarity(face.embedding, embedding)
+            if value > track_best:
+                track, track_best = candidate, value
+        track_level = face_engine.level_of(track_best) if track else None
         return {'bbox': face.bbox, 'det_score': face.det_score, 'embedding': face.embedding,
-                'similarity': best, 'level': level,
-                'case_id': best_case.id if level else None, 'name': best_case.person.name if level else None}
+                'similarity': best, 'level': level, 'age': getattr(face, 'age', None),
+                'case_id': best_case.id if level else None, 'name': best_case.person.name if level else None,
+                'track': track if track_level else None, 'track_similarity': track_best,
+                'track_level': track_level,
+                'track_label': f'{track.person_track_id} {track.event_id}' if track_level else None}
+
+    def _record_sighting(self, frame, face):
+        """La persona de un evento reapareció frente a esta cámara: un punto más de su trayecto."""
+        from services.tracking_service import record_sighting
+        record_sighting(face['track'], self.camera_id, face['track_similarity'], face['track_level'],
+                        face_crop_data_url(frame, face['bbox'], mirrored=self.mirror))
 
     def _record(self, frame, face):
-        """One detection per case and camera in each window, keeping its best capture."""
+        """One detection per case and camera in each window, keeping its best capture.
+
+        La detección guarda también la huella y los rasgos estimados (edad aproximada y color de
+        la ropa superior), para que una ficha registrada después pueda compararse contra ella.
+        """
         from services.cameras_service import get_camera
         now, key = time.monotonic(), (face['case_id'], self.camera_id)
         x1, y1, x2, y2 = face['bbox']
@@ -371,9 +462,13 @@ class LiveRecognition:
             if percent > detection.similarity and detection.status == 'Pendiente de validación':
                 detection.similarity, detection.quality = percent, quality
                 detection.capture = face_crop_data_url(frame, face['bbox'], mirrored=self.mirror)
+                detection.embedding = [float(v) for v in face['embedding']]
             return
+        from services.appearance_service import upper_clothing_color
         detection = Detection(next_id(store.detections, 'DET'), face['case_id'], self.camera_id, store.now(),
-                              percent, quality=quality, capture=face_crop_data_url(frame, face['bbox'], mirrored=self.mirror))
+                              percent, quality=quality, capture=face_crop_data_url(frame, face['bbox'], mirrored=self.mirror),
+                              embedding=[float(v) for v in face['embedding']], estimated_age=face.get('age'),
+                              clothing_color=upper_clothing_color(frame, face['bbox']))
         match = Match(next_id(store.matches, 'MAT'), detection.id)
         store.detections.insert(0, detection)
         store.matches.insert(0, match)
