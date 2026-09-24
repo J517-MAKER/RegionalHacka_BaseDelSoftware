@@ -2,6 +2,20 @@ import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
+
+
+def load_env_file(path=BASE_DIR / '.env'):
+    """Variables locales (tokens) desde .env, que nunca se sube a git; las del sistema mandan."""
+    if not path.exists():
+        return
+    for line in path.read_text(encoding='utf-8').splitlines():
+        line = line.strip()
+        if line and not line.startswith('#') and '=' in line:
+            name, value = line.split('=', 1)
+            os.environ.setdefault(name.strip(), value.strip().strip('"').strip("'"))
+
+
+load_env_file()
 APP_NAME = 'NEXO'
 APP_SUBTITLE = 'Sistema de búsqueda y monitoreo'
 HOST = os.getenv('NEXO_HOST', '127.0.0.1')
@@ -9,6 +23,7 @@ PORT = int(os.getenv('NEXO_PORT', '8080'))
 DEMO_DATE = '2026-09-23'
 DATA_DIR = BASE_DIR / 'data'
 # Token público de Mapbox (pk.*): viaja al navegador para descargar el mapa base.
+# Va en el archivo .env (ver .env.example), no en el código: GitHub bloquea los tokens.
 MAPBOX_TOKEN = os.getenv('NEXO_MAPBOX_TOKEN', '')
 
 VOICE_MODEL = os.getenv('VOICE_MODEL', 'base')

@@ -65,7 +65,8 @@ def case_row(case):
 
 
 def camera_row(camera):
-    return (camera.id, camera.name, camera.location, camera.zone, camera.status, camera.last_seen)
+    return (camera.id, camera.name, camera.location, camera.zone, camera.status, camera.last_seen,
+            getattr(camera, 'lat', None), getattr(camera, 'lng', None))
 
 
 def detection_row(detection, match):
@@ -202,11 +203,13 @@ class DatabaseSync:
             for camera in list(store.cameras):
                 row = camera_row(camera)
                 if self._changed('camera', camera.id, row):
-                    cur.execute('''INSERT INTO camaras (codigo_camara, nombre, ubicacion, zona, estado, ultima_comunicacion)
-                                   VALUES (%s, %s, %s, %s, %s, %s)
+                    cur.execute('''INSERT INTO camaras (codigo_camara, nombre, ubicacion, zona, estado, ultima_comunicacion,
+                                                        latitud, longitud)
+                                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                                    ON CONFLICT (codigo_camara) DO UPDATE SET nombre = EXCLUDED.nombre,
                                        ubicacion = EXCLUDED.ubicacion, zona = EXCLUDED.zona,
-                                       estado = EXCLUDED.estado, ultima_comunicacion = EXCLUDED.ultima_comunicacion''',
+                                       estado = EXCLUDED.estado, ultima_comunicacion = EXCLUDED.ultima_comunicacion,
+                                       latitud = EXCLUDED.latitud, longitud = EXCLUDED.longitud''',
                                 row)
             for case in list(store.cases):
                 row = case_row(case)

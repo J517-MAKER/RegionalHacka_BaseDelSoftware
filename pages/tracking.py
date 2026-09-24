@@ -155,7 +155,7 @@ def tracking_page(case_id: str = 'BUS-2026-0184', alert_id: str = '', camera_id:
 
         with ui.element('div').classes('workspace-grid'):
             with Panel('Seguimiento de evento' if alert else 'Registro espacial de detecciones',
-                       'PLANO LOCAL · DEMO'):
+                       'MAPA · MÉXICO'):
                 MapView(detections=history,
                         selected=selected_camera.id if selected_camera else None,
                         height=500)

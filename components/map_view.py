@@ -179,36 +179,58 @@ ui.add_head_html("""
 </style>
 """, shared=True)
 
-# ── Body HTML: map bootstrap with white style ────────────────────────────────
+# ── Body HTML: mapa blanco de Mexico, delimitado con su frontera real ─────────
 ui.add_body_html("""
 <script>
 (function () {
-  var MEXICO = [[-118.407986, 14.532098], [-86.710405, 32.718655]];
+  // Rectángulo que contiene a México con un poco de margen: el mapa no sale de aquí.
+  var MEXICO = [[-118.6, 14.3], [-86.5, 32.9]];
+  var LIMITS = [[-126, 9.5], [-79, 37.5]];
+  var TEAL = 'rgb(50,120,138)';
+  // Vista mundial de fronteras (la que usan los ejemplos de Mapbox).
+  var WORLDVIEW = ['any', ['==', 'all', ['get', 'worldview']], ['in', 'US', ['get', 'worldview']]];
   var views = {}, maps = new Set(), position = null, asked = false;
 
+  // Respaldo sin token: teselas claras de CARTO (sin máscara de fronteras).
   var CARTO_LIGHT = {
     version: 8,
-    sources: {
-      'carto-light': {
-        type: 'raster',
-        tiles: [
-          'https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
-          'https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
-          'https://c.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
-          'https://d.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png'
-        ],
-        tileSize: 256,
-        attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
-      }
-    },
-    layers: [{
-      id: 'carto-light-tiles',
-      type: 'raster',
-      source: 'carto-light',
-      minzoom: 0,
-      maxzoom: 20
-    }]
+    sources: { 'carto-light': { type: 'raster', tileSize: 256,
+      tiles: ['a', 'b', 'c', 'd'].map(function (s) { return 'https://' + s + '.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png'; }),
+      attribution: '&copy; OpenStreetMap contributors &copy; CARTO' } },
+    layers: [{ id: 'carto-light-tiles', type: 'raster', source: 'carto-light' }]
   };
+
+  // Mapa blanco: tierra blanca, agua gris azulado muy tenue, sin parques ni relieve, etiquetas en español.
+  function whiten(map) {
+    map.getStyle().layers.forEach(function (layer) {
+      var id = layer.id;
+      try {
+        if (layer.type === 'background') map.setPaintProperty(id, 'background-color', '#ffffff');
+        else if (id === 'land' || id.indexOf('landcover') === 0) map.setPaintProperty(id, 'background-color', '#ffffff');
+        if (layer.type === 'fill' && id.indexOf('water') === 0) map.setPaintProperty(id, 'fill-color', '#eaf2f4');
+        if (/^(landuse|national-park|hillshade|landcover|land-structure)/.test(id)) map.setLayoutProperty(id, 'visibility', 'none');
+        if (/^admin-0-boundary/.test(id)) map.setLayoutProperty(id, 'visibility', 'none');  // la sustituye el contorno de México
+        if (layer.type === 'symbol' && layer.layout && layer.layout['text-field'])
+          map.setLayoutProperty(id, 'text-field', ['coalesce', ['get', 'name_es'], ['get', 'name']]);
+      } catch (e) { /* capa sin esa propiedad */ }
+    });
+  }
+
+  // Delimitación: todo lo que no es México queda en blanco y México lleva su contorno real.
+  function delimitMexico(map) {
+    if (map.getSource('paises')) return;
+    map.addSource('paises', { type: 'vector', url: 'mapbox://mapbox.country-boundaries-v1' });
+    map.addLayer({ id: 'fuera-de-mexico', type: 'fill', source: 'paises', 'source-layer': 'country_boundaries',
+      filter: ['all', ['!=', ['get', 'iso_3166_1'], 'MX'], WORLDVIEW],
+      paint: { 'fill-color': '#ffffff', 'fill-opacity': 1 } });
+    map.addLayer({ id: 'mexico-relleno', type: 'fill', source: 'paises', 'source-layer': 'country_boundaries',
+      filter: ['all', ['==', ['get', 'iso_3166_1'], 'MX'], WORLDVIEW],
+      paint: { 'fill-color': TEAL, 'fill-opacity': 0.03 } });
+    map.addLayer({ id: 'mexico-contorno', type: 'line', source: 'paises', 'source-layer': 'country_boundaries',
+      filter: ['all', ['==', ['get', 'iso_3166_1'], 'MX'], WORLDVIEW],
+      layout: { 'line-join': 'round' },
+      paint: { 'line-color': TEAL, 'line-width': ['interpolate', ['linear'], ['zoom'], 3, 1.6, 8, 3] } });
+  }
 
   function userMarker(map) {
     if (!position) return;
@@ -240,77 +262,43 @@ ui.add_body_html("""
   }
 
   function init(el) {
-    if (el._nexoMap || !el.isConnected) return;
+    if (el._nexoMap || !el.isConnected || !el.clientWidth) return;
     var data = JSON.parse(el.dataset.markers || '[]');
     var selected = data.find(function (m) { return m.selected; });
     var key = location.pathname + location.search + '|' + (el.dataset.selected || '');
-    var view = views[key] || (selected ? { center: [selected.lng, selected.lat], zoom: 10 }
-                                       : { center: [-102.5528, 23.6345], zoom: 4.5 });
-    
-    var token = el.dataset.token && el.dataset.token.trim().length > 10 ? el.dataset.token.trim() : null;
-    if (token) {
-      mapboxgl.accessToken = token;
-    }
-    var mapStyle = token ? 'mapbox://styles/mapbox/light-v11' : CARTO_LIGHT;
+    var token = (el.dataset.token || '').trim();
+    if (token.length > 10) mapboxgl.accessToken = token;
+    var useMapbox = token.length > 10;
 
-    var map = new mapboxgl.Map({
+    var options = {
       container: el,
-      style: mapStyle,
-      center: view.center,
-      zoom: view.zoom,
-      maxBounds: MEXICO
-    });
+      style: useMapbox ? 'mapbox://styles/mapbox/light-v11' : CARTO_LIGHT,
+      maxBounds: LIMITS,
+      minZoom: 3.2,
+      renderWorldCopies: false,
+      attributionControl: true
+    };
+    var saved = views[key];
+    if (saved) { options.center = saved.center; options.zoom = saved.zoom; }
+    else if (selected) { options.center = [selected.lng, selected.lat]; options.zoom = 9; }
+    else { options.bounds = MEXICO; options.fitBoundsOptions = { padding: 24 }; }
+
+    var map = new mapboxgl.Map(options);
     el._nexoMap = map;
     maps.add(el);
-    map.addControl(new mapboxgl.NavigationControl(), 'top-right');
+    map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'top-right');
     map.on('moveend', function () { views[key] = { center: map.getCenter().toArray(), zoom: map.getZoom() }; });
-
-    // Handle map resize on load & timers
-    function forceResize() {
-      try { if (map) map.resize(); } catch(e) {}
-    }
-    map.on('load', function() {
-      forceResize();
-      try {
-        map.addSource('mexico-border', {
-          type: 'geojson',
-          data: {
-            type: 'Feature',
-            geometry: {
-              type: 'Polygon',
-              coordinates: [[
-                [-117.12, 32.53], [-114.72, 32.72], [-111.07, 31.33], [-108.21, 31.33],
-                [-106.45, 31.75], [-104.98, 30.60], [-103.30, 28.97], [-102.40, 29.76],
-                [-101.40, 29.77], [-100.08, 28.14], [-99.10, 26.39], [-97.14, 25.97],
-                [-97.14, 22.88], [-94.81, 18.51], [-92.23, 14.55], [-90.60, 13.93],
-                [-88.62, 15.86], [-87.40, 15.60], [-86.71, 17.55], [-87.43, 20.23],
-                [-87.53, 21.47], [-90.35, 21.02], [-91.74, 18.68], [-93.55, 18.43],
-                [-96.04, 19.07], [-96.56, 19.87], [-97.56, 22.01], [-105.23, 20.63],
-                [-105.64, 22.00], [-108.40, 25.17], [-109.94, 27.53], [-112.16, 29.01],
-                [-114.57, 31.93], [-117.12, 32.53]
-              ]]
-            }
-          }
-        });
-        map.addLayer({
-          id: 'mexico-border-glow',
-          type: 'line',
-          source: 'mexico-border',
-          paint: {
-            'line-color': '#32788A',
-            'line-width': 2.5,
-            'line-opacity': 0.7,
-            'line-blur': 1
-          }
-        });
-      } catch(err) {
-        console.warn('Border layer error:', err);
-      }
+    map.on('style.load', function () {
+      if (!useMapbox) return;
+      whiten(map);
+      try { delimitMexico(map); } catch (err) { console.warn('Delimitación de México:', err); }
     });
+    map.on('error', function (e) { console.warn('Mapbox:', e && e.error ? e.error.message : e); });
 
-    setTimeout(forceResize, 150);
-    setTimeout(forceResize, 500);
-    setTimeout(forceResize, 1000);
+    // El contenedor puede medir 0 px al crearse (pestañas, paneles): se ajusta cuando cambia de tamaño.
+    if (window.ResizeObserver) {
+      new ResizeObserver(function () { try { map.resize(); } catch (e) {} }).observe(el);
+    }
 
     drawMarkers(el);
     userMarker(map);
@@ -341,6 +329,8 @@ ui.add_body_html("""
     setTimeout(function () { pending = false; if (typeof mapboxgl !== 'undefined') sweep(); }, 50);
   }).observe(document.documentElement, { childList: true, subtree: true,
                                          attributes: true, attributeFilter: ['data-markers'] });
+  // Un mapa que se creó oculto (0 px) se inicia en cuanto aparece.
+  setInterval(function () { if (typeof mapboxgl !== 'undefined') sweep(); }, 1000);
   (function wait() { if (typeof mapboxgl === 'undefined') { setTimeout(wait, 150); return; } sweep(); })();
 })();
 </script>
@@ -348,7 +338,7 @@ ui.add_body_html("""
 
 
 def MapView(cameras=None, detections=None, selected=None, on_select=None, height=None):
-    """Mapbox map of the cameras with vibrant dark theme. Returns the container."""
+    """Mapa blanco de México (Mapbox) con las cámaras. Devuelve el contenedor."""
     px_height = height if height else 500
     with ui.element('div').classes('map-stage').style(
         f'height:{px_height}px; position:relative; '
@@ -390,8 +380,8 @@ def markers(cameras=None, detections=None, selected=None):
         # Interpolamos X,Y (0-100) a Lat,Lng dentro de México
         # Lat: 14.53 a 32.71 -> Rango = 18.18 (y invertido: 100=sur, 0=norte)
         # Lng: -118.4 a -86.7 -> Rango = 31.7
-        lat = 32.718655 - (camera.y / 100.0) * 18.186557
-        lng = -118.407986 + (camera.x / 100.0) * 31.697581
+        lat = camera.lat if getattr(camera, 'lat', None) is not None else 32.718655 - (camera.y / 100.0) * 18.186557
+        lng = camera.lng if getattr(camera, 'lng', None) is not None else -118.407986 + (camera.x / 100.0) * 31.697581
 
         detection = next((d for d in reversed(detection_list) if d.camera_id == camera.id), None)
         status = detection.status if detection else camera.status
