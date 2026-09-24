@@ -828,59 +828,190 @@ body {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 10px;
+  gap: 12px;
 }
-.assistant-button.q-btn {
-  width: 52px;
-  height: 52px;
-  min-height: 52px;
-  border-radius: 50%;
-  background: var(--navy);
+/* Mascot: one drawing reused by the launcher and the panel header. */
+.mascot {
+  width: 100%;
+  height: 100%;
+  display: block;
+  overflow: visible;
+}
+.mascot-eye {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: mascot-blink 5.4s infinite;
+}
+.mascot-spark {
+  animation: mascot-spark 2.4s ease-in-out infinite;
+}
+.mascot-wave {
+  opacity: 0;
+}
+.mascot-wave rect {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+@keyframes mascot-blink {
+  0%,93%,100% { transform: scaleY(1); }
+  96% { transform: scaleY(.12); }
+}
+@keyframes mascot-spark {
+  0%,100% { opacity: .5; transform: scale(.88); }
+  50% { opacity: 1; transform: scale(1.1); }
+}
+@keyframes mascot-bar {
+  0%,100% { transform: scaleY(.55); }
+  50% { transform: scaleY(1.5); }
+}
+@keyframes mascot-think {
+  0%,100% { transform: translateY(0) rotate(0deg); }
+  25% { transform: translateY(-2px) rotate(-5deg); }
+  75% { transform: translateY(-2px) rotate(5deg); }
+}
+/* While listening the mascot swaps its smile for a small level meter. */
+.assistant-dock.is-listening .mascot-smile { opacity: 0; }
+.assistant-dock.is-listening .mascot-wave { opacity: 1; }
+.assistant-dock.is-listening .mascot-wave rect { animation: mascot-bar .85s ease-in-out infinite; }
+.assistant-dock.is-listening .mascot-wave rect:nth-child(2) { animation-delay: .14s; }
+.assistant-dock.is-listening .mascot-wave rect:nth-child(3) { animation-delay: .28s; }
+.assistant-dock.is-listening .mascot-spark { fill: #f08a82; }
+.assistant-dock.is-processing .mascot { animation: mascot-think 1.1s ease-in-out infinite; }
+.assistant-dock.is-done .mascot-spark { fill: #61c391; }
+.assistant-dock.is-failed .mascot-spark { fill: #e0aa5b; }
+/* Launcher: a pill the mascot leans out of, in the manner of a desktop assistant. */
+.assistant-launcher.q-btn {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 7px 18px 7px 8px;
+  min-height: 60px;
+  border-radius: 999px;
+  background: linear-gradient(135deg,#25648a,#153449);
+  border: 1px solid rgba(255,255,255,.26);
+  box-shadow: 0 8px 22px rgba(20,43,59,.34);
+  transition: transform .18s ease, box-shadow .18s ease;
+}
+/* Quasar tints a flat button's label with the theme colour; the pill needs plain white. */
+.assistant-launcher.q-btn,
+.assistant-launcher.q-btn .q-btn__content,
+.assistant-launcher.q-btn .assistant-launcher-text {
   color: #fff;
-  border: 1px solid var(--navy);
-  box-shadow: 0 2px 6px rgba(20,43,59,.22);
 }
-.assistant-button.q-btn.listening {
-  background: #b54b43;
-  border-color: #b54b43;
-  animation: assistant-pulse 1.6s ease-in-out infinite;
+.assistant-launcher.q-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 13px 28px rgba(20,43,59,.36);
 }
-.assistant-button.q-btn.processing {
-  background: var(--blue);
-  border-color: var(--blue);
+.assistant-launcher.q-btn:active {
+  transform: translateY(0);
 }
-.assistant-button.q-btn.done {
-  background: #357358;
-  border-color: #357358;
+.assistant-launcher .q-btn__content {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  flex-wrap: nowrap;
 }
-.assistant-button.q-btn.failed {
-  background: #9d7426;
-  border-color: #9d7426;
+.assistant-mascot {
+  width: 48px;
+  height: 48px;
+  flex: none;
+  border-radius: 50%;
+  /* A pale disc behind the mascot so its dark face keeps its shape over the navy pill. */
+  background: radial-gradient(circle at 50% 54%, rgba(255,255,255,.30) 58%, rgba(255,255,255,0) 72%);
+  filter: drop-shadow(0 2px 5px rgba(0,0,0,.38));
 }
-@keyframes assistant-pulse {
-  0%,100% { box-shadow: 0 0 0 0 rgba(181,75,67,.30); }
-  50% { box-shadow: 0 0 0 7px rgba(181,75,67,0); }
-}
-.assistant-panel {
-  width: 286px;
-  background: #fff;
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  box-shadow: 0 4px 14px rgba(20,43,59,.12);
-  padding: 14px 15px;
+.assistant-launcher-text {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  align-items: flex-start;
+  line-height: 1.2;
+  text-transform: none;
 }
-.assistant-title {
-  font-size: 10px;
-  letter-spacing: .10em;
-  text-transform: uppercase;
+.assistant-launcher-name {
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: .015em;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(9,22,31,.55);
+}
+.assistant-launcher-hint {
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(255,255,255,.88);
+  text-shadow: 0 1px 3px rgba(9,22,31,.5);
+}
+.assistant-dock.is-listening .assistant-launcher.q-btn {
+  background: linear-gradient(135deg,#b54b43,#8e352f);
+  animation: assistant-pulse 1.6s ease-in-out infinite;
+}
+@keyframes assistant-pulse {
+  0%,100% { box-shadow: 0 8px 22px rgba(20,43,59,.30), 0 0 0 0 rgba(181,75,67,.34); }
+  50% { box-shadow: 0 8px 22px rgba(20,43,59,.30), 0 0 0 11px rgba(181,75,67,0); }
+}
+/* Panel: opens above the launcher like a chat window, but for speaking. */
+.assistant-panel {
+  width: 326px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: 0 18px 44px rgba(20,43,59,.22);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  animation: assistant-rise .22s ease-out;
+}
+@keyframes assistant-rise {
+  from { opacity: 0; transform: translateY(12px) scale(.97); }
+  to { opacity: 1; transform: none; }
+}
+.assistant-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 13px;
+  background: linear-gradient(135deg,#142b3b,#245f83);
+  color: #fff;
+}
+.assistant-avatar {
+  width: 40px;
+  height: 40px;
+  flex: none;
+}
+.assistant-head-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+  min-width: 0;
+}
+.assistant-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+.assistant-close.q-btn {
+  margin-left: auto;
+  color: #fff;
+  opacity: .8;
+  min-height: 0;
+}
+.assistant-close.q-btn:hover {
+  opacity: 1;
+}
+.assistant-body {
+  padding: 13px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  max-height: 340px;
+  overflow-y: auto;
+}
+.assistant-greeting {
+  font-size: 12.5px;
   color: var(--muted);
+  line-height: 1.45;
 }
 .assistant-status {
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 11px;
+  opacity: .88;
 }
 .assistant-status.live::before {
   content: '';
@@ -888,39 +1019,79 @@ body {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #b54b43;
+  background: #ff8e84;
   margin-right: 7px;
   vertical-align: middle;
 }
 .assistant-transcript {
   font-size: 13px;
   color: var(--ink);
-  background: #f5f7f8;
-  border-radius: 3px;
-  padding: 8px 10px;
+  background: #eef3f6;
+  border-radius: 12px 12px 12px 4px;
+  padding: 9px 11px;
   white-space: pre-wrap;
+  align-self: flex-start;
+  max-width: 100%;
 }
 .assistant-outcome {
   font-size: 12px;
   color: var(--ink);
+  background: #f2f8f4;
+  border: 1px solid #d9e8df;
+  border-radius: 12px 12px 4px 12px;
+  padding: 9px 11px;
   white-space: pre-wrap;
+  align-self: flex-end;
+  max-width: 100%;
+}
+.assistant-dock.is-failed .assistant-outcome {
+  background: #fdf6ec;
+  border-color: #eedfc4;
 }
 .assistant-hint {
   font-size: 11px;
   color: var(--muted);
 }
 .assistant-options {
-  gap: 4px;
+  gap: 5px;
   width: 100%;
 }
 .assistant-option {
   border: 1px solid var(--line);
-  border-radius: 3px;
-  padding: 7px 9px;
+  border-radius: 9px;
+  padding: 8px 10px;
   cursor: pointer;
+  transition: background .15s ease, border-color .15s ease;
 }
 .assistant-option:hover {
   background: #f5f7f8;
+  border-color: #bfd0dc;
+}
+.assistant-foot {
+  padding: 11px 14px 13px;
+  border-top: 1px solid var(--line);
+  background: #fbfcfd;
+}
+.assistant-talk.q-btn {
+  width: 100%;
+  min-height: 40px;
+  border-radius: 999px;
+  background: var(--blue);
+  color: #fff;
+  font-size: 12.5px;
+  letter-spacing: .02em;
+}
+.assistant-talk.q-btn.listening {
+  background: #b54b43;
+}
+.assistant-talk.q-btn.processing {
+  background: var(--navy);
+}
+.assistant-talk.q-btn.done {
+  background: #357358;
+}
+.assistant-talk.q-btn.failed {
+  background: #9d7426;
 }
 @media (max-width:600px) {
   .assistant-dock {
@@ -928,8 +1099,14 @@ body {
     bottom: 14px;
   }
   .assistant-panel {
-    width: calc(100vw - 42px);
-    max-width: 286px;
+    width: calc(100vw - 32px);
+    max-width: 326px;
+  }
+  .assistant-launcher-text {
+    display: none;
+  }
+  .assistant-launcher.q-btn {
+    padding: 7px;
   }
 }
 .live-layout {
