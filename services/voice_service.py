@@ -151,8 +151,9 @@ def register_capture_in_database(event):
     try:
         import numpy as np
         from services.db_service import guardar_captura_rostro
-        from services.live_recognition_service import live
-        face = live.current_face(event.camera_id)
+        from services.live_recognition_service import running_for_camera
+        inst = running_for_camera(event.camera_id)
+        face = inst.current_face(event.camera_id) if inst else None
         embedding = face['embedding'] if face else np.random.rand(512).astype('float32')
         captura = guardar_captura_rostro(codigo_camara=event.camera_id,
                                          embedding=embedding.tolist(),

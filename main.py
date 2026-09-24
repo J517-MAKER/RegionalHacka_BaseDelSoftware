@@ -25,8 +25,7 @@ app.add_static_files('/imports',str(config.IMPORT_DIR))
 
 from pages import (monitor,cases,import_alert,case_detail,cameras,live,matches,tracking,alerts,voice,  # noqa: E402,F401
                    history,users,settings,supervision)  # noqa: E402,F401
-from services.live_recognition_service import live as live_recognition  # noqa: E402
-from services.camera_monitor_service import monitor as camera_monitor  # noqa: E402
+from services.live_recognition_service import stop_all as stop_live_cameras  # noqa: E402
 
 
 async def expire_voice_transcripts():
@@ -42,11 +41,7 @@ def start_voice_retention():
 
 if not app.is_started:  # the interface tests re-execute this module
     app.on_startup(start_voice_retention)
-    # Las cámaras se consideran en marcha por sí mismas: el monitoreo arranca con el
-    # servidor, no cuando alguien abre una página o pulsa un botón.
-    app.on_startup(camera_monitor.start)
-    app.on_shutdown(camera_monitor.stop)
-    app.on_shutdown(live_recognition.stop)  # release the webcam when the server stops
+    app.on_shutdown(stop_live_cameras)  # libera las dos cámaras al detener el servidor
 
 
 @ui.page('/')
@@ -56,7 +51,20 @@ def index():
     ui.navigate.to(home_route())
 
 
+def port_in_use(host, port):
+    """True when another program (usually an earlier NEXO still running) already listens there."""
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.settimeout(.5)
+        return probe.connect_ex((host, port)) == 0
+
+
 if __name__ in {'__main__','__mp_main__'}:
+    # The interface tests also run this module, without opening the port.
+    if __name__ == '__main__' and 'PYTEST_CURRENT_TEST' not in os.environ and port_in_use(HOST, PORT):
+        raise SystemExit(f'El puerto {PORT} ya está en uso: probablemente NEXO sigue abierto en otra terminal.\n'
+                         f'Ciérralo (Ctrl+C en esa terminal) o abre http://{HOST}:{PORT}, '
+                         f'o usa otro puerto: $env:NEXO_PORT="8081"; python main.py')
     ui.run(host=HOST,port=PORT,title='NEXO · Búsqueda y monitoreo',language='es',
            reload=False,show=os.getenv('NEXO_SHOW','1')=='1',
            storage_secret=os.getenv('NEXO_STORAGE_SECRET') or secrets.token_hex(32),

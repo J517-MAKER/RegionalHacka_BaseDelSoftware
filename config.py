@@ -2,6 +2,20 @@ import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
+
+
+def load_env_file(path=BASE_DIR / '.env'):
+    """Variables locales (tokens) desde .env, que nunca se sube a git; las del sistema mandan."""
+    if not path.exists():
+        return
+    for line in path.read_text(encoding='utf-8').splitlines():
+        line = line.strip()
+        if line and not line.startswith('#') and '=' in line:
+            name, value = line.split('=', 1)
+            os.environ.setdefault(name.strip(), value.strip().strip('"').strip("'"))
+
+
+load_env_file()
 APP_NAME = 'NEXO'
 APP_SUBTITLE = 'Sistema de búsqueda y monitoreo'
 HOST = os.getenv('NEXO_HOST', '127.0.0.1')
@@ -9,6 +23,7 @@ PORT = int(os.getenv('NEXO_PORT', '8080'))
 DEMO_DATE = '2026-09-23'
 DATA_DIR = BASE_DIR / 'data'
 # Token público de Mapbox (pk.*): viaja al navegador para descargar el mapa base.
+# Va en el archivo .env (ver .env.example), no en el código: GitHub bloquea los tokens.
 MAPBOX_TOKEN = os.getenv('NEXO_MAPBOX_TOKEN', '')
 
 VOICE_MODEL = os.getenv('VOICE_MODEL', 'base')
@@ -38,8 +53,13 @@ EVIDENCE_POST_SECONDS = 10
 # Ring buffer: pre-roll + window + post-roll with margin. Nothing older is kept.
 AUDIO_RING_SECONDS = EVIDENCE_PRE_SECONDS + AUDIO_WINDOW_SECONDS + EVIDENCE_POST_SECONDS + 15
 DEFAULT_CAMERA_ID = os.getenv('NEXO_CAMERA', 'CAM-008')
+SECOND_CAMERA_ID = os.getenv('NEXO_CAMERA_2', 'CAM-007')
 
 # Importación de alertas de búsqueda: archivos temporales, nunca evidencia.
+# Base de datos PostgreSQL (docker-compose.yml). Opcional: sin contenedor, NEXO trabaja en memoria.
+DB_SYNC_ENABLED = os.getenv('NEXO_DB_SYNC', '1') == '1'
+DB_SYNC_SECONDS = float(os.getenv('NEXO_DB_SYNC_SECONDS', '5'))
+
 IMPORT_DIR = BASE_DIR / 'imports'
 IMPORT_DOCUMENTS_DIR = IMPORT_DIR / 'documents'
 IMPORT_PHOTOS_DIR = IMPORT_DIR / 'photos'
@@ -61,6 +81,7 @@ FACE_LEVEL_HIGH = 0.60
 
 # Reconocimiento en vivo: la webcam del equipo donde corre NEXO, asociada a una cámara de la red.
 CAMERA_INDEX = int(os.getenv('NEXO_CAMERA_INDEX', '0'))
+CAMERA_INDEX_2 = int(os.getenv('NEXO_CAMERA_INDEX_2', '1'))
 # Una detección por caso y cámara en cada ventana; dentro de ella se conserva la mejor captura.
 LIVE_DETECTION_COOLDOWN_SECONDS = 30
 LIVE_GALLERY_REFRESH_SECONDS = 2
@@ -99,10 +120,6 @@ CANDIDATE_MAX_RESULTS = 25
 # (NEXO_CAMERA_AUTOSTART=false) en equipos donde la webcam se necesite para otra cosa.
 CAMERA_AUTOSTART = os.getenv('NEXO_CAMERA_AUTOSTART', 'true').lower() in ('true', '1', 'yes')
 CAMERA_AUTOSTART_RETRY_SECONDS = 20
-# Una webcam virtual sin señal entrega cuadros completamente negros: no sirve como fuente.
-CAMERA_AUTO_DEVICE = os.getenv('NEXO_CAMERA_AUTO_DEVICE', 'true').lower() in ('true', '1', 'yes')
-CAMERA_PROBE_MAX_INDEX = 4
-CAMERA_PROBE_MIN_BRIGHTNESS = 1.0
 
 # Si el análisis se queda más atrás que esto, se salta al presente en vez de arrastrar el
 # retraso: es preferible perder un fragmento antiguo que escuchar siempre con demora.

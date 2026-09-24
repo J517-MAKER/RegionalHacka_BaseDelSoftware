@@ -125,18 +125,21 @@ class LiveWebcamAdapter(CameraStreamAdapter):
 
     @property
     def active(self):
-        from services.live_recognition_service import live
-        return bool(live.running and live.camera_id == self.camera_id)
+        from services.live_recognition_service import running_for_camera
+        return running_for_camera(self.camera_id) is not None
 
     def read(self):
-        from services.live_recognition_service import live
-        if not self.active:
+        # Hay dos cámaras físicas: la de la laptop y la webcam USB. Cada una atiende a su
+        # cámara de la red, así que se pregunta cuál está corriendo sobre ésta.
+        from services.live_recognition_service import running_for_camera
+        instance = running_for_camera(self.camera_id)
+        if instance is None:
             self.unavailable_reason = ('La cámara del equipo no está entregando imagen en este momento. '
                                        'El fragmento de video queda pendiente de integración.')
             return None
         self.unavailable_reason = ''
-        with live._lock:
-            frame = live._frame
+        with instance._lock:
+            frame = instance._frame
         return None if frame is None else frame.copy()
 
 
@@ -244,77 +247,59 @@ class CameraMonitor:
             time.sleep(config.CAMERA_STREAM_POLL_SECONDS)
 
     # ------------------------------------------------- la cámara del equipo, sin botones
-    def pick_device(self):
-        """Primer dispositivo que entrega imagen real.
-
-        Una webcam virtual sin señal (por ejemplo la utilidad de una réflex apagada) abre
-        correctamente pero devuelve cuadros completamente negros. Arrancar contra ella
-        dejaría el monitoreo en marcha y ciego, así que se descarta y se prueba la siguiente.
-        """
-        if self._device is not None:
-            return self._device
-        # Sondear consume lecturas del dispositivo: en pruebas se usa el índice configurado,
-        # que es el que sus cámaras falsas esperan.
-        if not config.CAMERA_AUTO_DEVICE or not autostart_enabled():
-            self._device = config.CAMERA_INDEX
-            return self._device
-        import sys
-        import cv2
-        backend = cv2.CAP_DSHOW if sys.platform == 'win32' else cv2.CAP_ANY
-        for index in range(config.CAMERA_PROBE_MAX_INDEX):
-            capture = cv2.VideoCapture(index, backend)
-            try:
-                if not capture.isOpened():
-                    continue
-                brightest = 0.0
-                for _ in range(6):
-                    ok, frame = capture.read()
-                    if ok and frame is not None:
-                        brightest = max(brightest, float(frame.mean()))
-                if brightest >= config.CAMERA_PROBE_MIN_BRIGHTNESS:
-                    self._device = index
-                    return index
-            finally:
-                capture.release()
-        self._device = config.CAMERA_INDEX  # ninguna dio imagen: se intentará la configurada
-        return self._device
-
     def ensure_live_stream(self):
-        """Incorpora la cámara del equipo al monitoreo continuo, sin intervención humana."""
-        from services.live_recognition_service import live
-        if not autostart_enabled() or self.paused_by or live.running:
+        """Incorpora las cámaras del equipo al monitoreo continuo, sin intervención humana.
+
+        El dispositivo lo resuelve el módulo en vivo por el tipo de cada ranura —la de la
+        laptop y la webcam USB—, que además descarta las cámaras virtuales. Aquí no se
+        duplica esa lógica: sólo se decide cuándo arrancar.
+        """
+        from services.live_recognition_service import LIVE_INSTANCES
+        if not autostart_enabled() or self.paused_by:
+            return False
+        pending = [inst for inst in LIVE_INSTANCES if not inst.running]
+        if not pending:
             return False
         now = time.monotonic()
         if now - self._last_attempt < config.CAMERA_AUTOSTART_RETRY_SECONDS:
             return False
         self._last_attempt = now
-        try:
-            live.start(config.DEFAULT_CAMERA_ID, self.pick_device(), 'Sistema · monitoreo continuo')
-            self.stream_error = ''
-            return True
-        except Exception as error:
-            # Una cámara ocupada o ausente no es un fallo del servidor: se reintenta luego.
-            self.stream_error = str(error)
-            self._device = None
-            return False
+        started, problems = False, []
+        for instance in pending:
+            try:
+                instance.start(actor='Sistema · monitoreo continuo')
+                started = True
+            except Exception as error:
+                # Una cámara ausente u ocupada no es un fallo del servidor: se reintenta.
+                problems.append(f'{instance.name}: {error}')
+        self.stream_error = ' · '.join(problems)
+        return started
 
     def pause_stream(self, actor='Sistema'):
-        """Pausa deliberada. La cámara queda libre y el monitoreo no la reabre solo."""
-        from services.live_recognition_service import live
+        """Pausa deliberada. Las cámaras quedan libres y el monitoreo no las reabre solo."""
+        from services.live_recognition_service import stop_all
         self.paused_by = actor
-        live.stop(actor)
-        store.audit(actor, 'Cámara', f'{actor} pausó la transmisión continua de {config.DEFAULT_CAMERA_ID}.',
+        stop_all(actor)
+        store.audit(actor, 'Cámara', f'{actor} pausó la transmisión continua de las cámaras del equipo.',
                     camera_id=config.DEFAULT_CAMERA_ID, result='PAUSADA')
 
     def resume_stream(self, actor='Sistema'):
-        from services.live_recognition_service import live
+        from services.live_recognition_service import LIVE_INSTANCES
         self.paused_by = ''
         self._last_attempt = 0.0
-        self._device = None
-        live.start(config.DEFAULT_CAMERA_ID, self.pick_device(), actor)
-        self.stream_error = ''
-        store.audit(actor, 'Cámara', f'{actor} reanudó la transmisión continua de {config.DEFAULT_CAMERA_ID}.',
+        problems = []
+        for instance in LIVE_INSTANCES:
+            if instance.running:
+                continue
+            try:
+                instance.start(actor=actor)
+            except Exception as error:
+                problems.append(f'{instance.name}: {error}')
+        self.stream_error = ' · '.join(problems)
+        store.audit(actor, 'Cámara', f'{actor} reanudó la transmisión continua de las cámaras del equipo.',
                     camera_id=config.DEFAULT_CAMERA_ID, result='RECONOCIENDO')
+        if problems and all(not i.running for i in LIVE_INSTANCES):
+            raise RuntimeError(self.stream_error)
 
     # -------------------------------------------------- el micrófono, también sin botones
     def audio_session(self):
@@ -381,9 +366,11 @@ class CameraMonitor:
 
     def stream_state(self):
         """Cómo está la cámara del equipo, para que la interfaz lo cuente sin adivinar."""
-        from services.live_recognition_service import live
-        if live.running:
-            return {'state': 'EN VIVO', 'automatic': autostart_enabled() and not self.paused_by, 'detail': ''}
+        from services.live_recognition_service import LIVE_INSTANCES
+        running = [inst for inst in LIVE_INSTANCES if inst.running]
+        if running:
+            return {'state': 'EN VIVO', 'automatic': autostart_enabled() and not self.paused_by,
+                    'detail': ' · '.join(inst.name for inst in running)}
         if self.paused_by:
             return {'state': 'PAUSADA', 'automatic': False,
                     'detail': f'Pausada por {self.paused_by}. La cámara está libre.'}

@@ -1,4 +1,6 @@
 .venv/
+# Tokens y contraseñas locales: nunca se versionan.
+.env
 venv/
 .tools/
 __pycache__/

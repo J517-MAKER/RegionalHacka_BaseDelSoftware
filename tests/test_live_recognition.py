@@ -19,6 +19,8 @@ from services.cameras_service import get_camera
 from services.live_recognition_service import LiveRecognition, LiveRecognitionError, next_id
 
 MAIN = Path(__file__).resolve().parents[1] / 'main.py'
+FAKE_DEVICES = [{'index': 0, 'name': 'Integrated Camera', 'kind': 'laptop'},
+                {'index': 1, 'name': 'USB Webcam', 'kind': 'usb'}]
 
 
 def unit(*values):
@@ -178,6 +180,7 @@ class LivePageTest(unittest.IsolatedAsyncioTestCase):
                 patch.object(Storage, 'path', Path(directory) / 'storage'), \
                 patch('config.LIVE_GALLERY_REFRESH_SECONDS', .2), patch.object(face_engine, 'load'), \
                 patch('cv2.VideoCapture', return_value=FakeCamera()), \
+                patch('services.live_recognition_service.list_video_devices', return_value=FAKE_DEVICES), \
                 patch.object(face_engine, 'analyze', side_effect=fake_analyze):
             async with user_simulation(main_file=MAIN) as user:
                 from services.live_recognition_service import live

@@ -1,6 +1,6 @@
 from datetime import datetime
 from nicegui import ui
-from services.live_recognition_service import live
+from services.live_recognition_service import any_live
 from services.users_service import context_labels, get_current_user, get_users, switch_demo_user
 
 
@@ -14,7 +14,8 @@ def Header(drawer):
             ui.element('span').classes('status-dot text-[#357358]')
             ui.label('Servicios simulados conectados').classes('text-[10px] muted')
         # Visible on every page while the webcam is on, so it is never left running unnoticed.
-        with ui.link(target='/live').classes('no-underline').bind_visibility_from(live, 'running'):
+        # El aviso aparece si cualquiera de las dos cámaras físicas está transmitiendo.
+        with ui.link(target='/live').classes('no-underline').bind_visibility_from(any_live, 'running'):
             with ui.row().classes('items-center gap-1'):
                 ui.element('span').classes('status-dot').style('background:#c62828')
                 ui.label('CÁMARA EN VIVO').classes('text-[10px] font-medium text-[#c62828]')

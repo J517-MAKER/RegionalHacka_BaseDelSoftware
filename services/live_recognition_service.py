@@ -59,16 +59,113 @@ def draw_face(image, face):
                 cv2.LINE_AA)
 
 
-class LiveRecognition:
-    """One webcam per computer, shared by every open page. The interface polls its state."""
+# ---------------------------------------------------------------------- devices
+# Physical cameras are told apart by their name, not by a fixed index: Windows renumbers
+# them when a USB webcam is plugged or unplugged, and virtual cameras (OBS, phones) are
+# listed among them.
+VIRTUAL_HINTS = ('virtual', 'obs', 'droidcam', 'iriun', 'manycam', 'xsplit', 'snap camera', 'ndi', 'epoccam')
+BUILTIN_HINTS = ('integrated', 'integrada', 'built-in', 'builtin', 'internal', 'interna', 'facetime')
+KIND_LABELS = {'laptop': 'Cámara de la laptop', 'usb': 'Webcam USB', 'virtual': 'Cámara virtual'}
 
-    def __init__(self):
+
+def classify_device(name):
+    """'laptop', 'usb' or 'virtual' from the name the operating system reports."""
+    low = (name or '').lower()
+    if any(hint in low for hint in VIRTUAL_HINTS):
+        return 'virtual'
+    if any(hint in low for hint in BUILTIN_HINTS):
+        return 'laptop'
+    return 'usb'
+
+
+def _directshow_names():
+    """Video inputs in DirectShow order, which is the index order of cv2.CAP_DSHOW."""
+    try:
+        import comtypes
+        try:
+            comtypes.CoInitialize()  # needed in every thread that talks to COM
+        except OSError:
+            pass
+        from pygrabber.dshow_graph import FilterGraph
+        return [name.strip() for name in FilterGraph().get_input_devices()]
+    except Exception:
+        return None
+
+
+def _probe_names(limit=4):
+    """Fallback without device names: the indexes that open, skipping the ones in use."""
+    import cv2
+    busy = {inst.camera_index for inst in LIVE_INSTANCES if inst.running}
+    names = []
+    for index in range(limit):
+        if index in busy:
+            names.append(f'Dispositivo {index}')
+            continue
+        capture = cv2.VideoCapture(index, cv2.CAP_DSHOW if sys.platform == 'win32' else cv2.CAP_ANY)
+        opened = capture.isOpened()
+        capture.release()
+        if not opened:
+            break
+        names.append(f'Dispositivo {index}')
+    return names
+
+
+def list_video_devices():
+    """[{'index', 'name', 'kind'}] for every video input of this computer."""
+    names = _directshow_names() if sys.platform == 'win32' else None
+    probed = names is None
+    if probed:
+        names = _probe_names()
+    devices = [{'index': i, 'name': name, 'kind': classify_device(name)} for i, name in enumerate(names)]
+    if probed and devices:  # no names: the first device is usually the built-in one
+        devices[0]['kind'] = 'laptop'
+    elif not any(d['kind'] == 'laptop' for d in devices):
+        physical = [d for d in devices if d['kind'] == 'usb']
+        if len(physical) > 1:  # two unnamed physical cameras: the first one is the laptop's
+            physical[0]['kind'] = 'laptop'
+    return devices
+
+
+def find_device(kind, exclude=(), devices=None):
+    """First device of that kind whose index is not excluded, or None."""
+    for device in list_video_devices() if devices is None else devices:
+        if device['kind'] == kind and device['index'] not in exclude:
+            return device
+    return None
+
+
+def device_name(index, devices=None):
+    for device in list_video_devices() if devices is None else devices:
+        if device['index'] == index:
+            return device['name']
+    return f'Dispositivo {index}'
+
+
+def _same_picture(frame_a, frame_b):
+    """True when two frames come from the same sensor (a camera mirrored through another index)."""
+    import cv2
+    if frame_a is None or frame_b is None:
+        return False
+    small = [cv2.cvtColor(cv2.resize(f, (64, 48)), cv2.COLOR_BGR2GRAY).astype('int16') for f in (frame_a, frame_b)]
+    return float(abs(small[0] - small[1]).mean()) < 1.5
+
+
+_start_lock = threading.Lock()
+
+
+class LiveRecognition:
+    """Live camera recognition instance for a network camera."""
+
+    def __init__(self, camera_id=None, camera_index=None, name='Cámara 1', kind=None):
+        self.name = name
+        self.kind = kind  # 'laptop' or 'usb': which physical camera this slot looks for
+        self.device_name = None
         self.running = False
         self.status = 'DETENIDA'
         self.error = None
         self.dark = False
-        self.camera_id = config.DEFAULT_CAMERA_ID
-        self.camera_index = config.CAMERA_INDEX
+        self.camera_id = camera_id or config.DEFAULT_CAMERA_ID
+        self.camera_index = config.CAMERA_INDEX if camera_index is None else camera_index
         self.actor = 'Sistema'
         self.fps = 0.0
         self.faces = []  # latest analysis, most prominent face first
@@ -83,30 +180,73 @@ class LiveRecognition:
         self._gallery_at = 0.0
 
     # ------------------------------------------------------------------ session
+    def _others(self):
+        return [inst for inst in LIVE_INSTANCES if inst is not self and inst.running]
+
+    def _resolve_index(self, camera_index):
+        """Device chosen by the operator, or the physical camera of this slot's kind."""
+        if camera_index is not None:
+            return int(camera_index), None
+        if not self.kind:
+            return self.camera_index, None
+        devices = list_video_devices()
+        busy = {inst.camera_index for inst in self._others()}
+        device = find_device(self.kind, busy, devices)
+        if device is None:
+            label = KIND_LABELS[self.kind].lower()
+            raise LiveRecognitionError(f'No se detectó la {label}. Conéctala y pulsa «Detectar cámaras».')
+        return device['index'], device['name']
+
     def start(self, camera_id=None, camera_index=None, actor='Sistema'):
         if self.running:
             return
+        with _start_lock:  # two slots never grab the same device at the same time
+            self._start(camera_id, camera_index, actor)
+
+    def _start(self, camera_id, camera_index, actor):
         try:
             face_engine.load()
         except face_engine.FaceEngineUnavailable as error:
             raise LiveRecognitionError(str(error)) from error
         import cv2
-        index = config.CAMERA_INDEX if camera_index is None else int(camera_index)
+        camera_id = camera_id or self.camera_id
+        index, name = self._resolve_index(camera_index)
+        for other in self._others():
+            if other.camera_index == index:
+                raise LiveRecognitionError(f'El dispositivo {index} ya lo usa {other.name}. '
+                                           'Elige la otra cámara física.')
+            if other.camera_id == camera_id:
+                raise LiveRecognitionError(f'{camera_id} ya está asignada a {other.name}. '
+                                           'Elige otra cámara de la red.')
         # DirectShow opens in about a second on Windows; the default backend can take several.
         capture = cv2.VideoCapture(index, cv2.CAP_DSHOW if sys.platform == 'win32' else cv2.CAP_ANY)
-        if not capture.isOpened() or not capture.read()[0]:
+        if capture.isOpened() and hasattr(capture, 'set'):
+            capture.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        ok, first = capture.read() if capture.isOpened() else (False, None)
+        if not ok:
             capture.release()
-            raise LiveRecognitionError('No fue posible abrir la cámara del equipo. Ciérrala en otras aplicaciones '
-                                       'y revisa Configuración > Privacidad y seguridad > Cámara.')
-        self.camera_id, self.camera_index, self.actor = camera_id or config.DEFAULT_CAMERA_ID, index, actor
+            raise LiveRecognitionError(f'No fue posible abrir la cámara (dispositivo {index}). '
+                                       'Verifica que esté conectada y que otra aplicación no la esté usando.')
+        for other in self._others():
+            with other._lock:
+                seen = other._frame
+            if seen is not None and _same_picture(cv2.flip(first, 1), seen):
+                capture.release()
+                raise LiveRecognitionError(f'El dispositivo {index} muestra la misma imagen que {other.name}; '
+                                           'es la misma cámara física. Elige otro dispositivo.')
+        self.camera_id = camera_id
+        self.camera_index = index
+        self.device_name = name or (device_name(index) if self.kind else None)
+        self.actor = actor
         self._capture = capture
         self._stop.clear()
         with self._lock:
             self._frame, self.faces = None, []
         self.error, self.dark, self.fps, self._gallery_at = None, False, 0.0, 0.0
         self.running, self.status = True, 'RECONOCIENDO'
-        self._threads = [threading.Thread(target=self._capture_loop, name='live-capture', daemon=True),
-                         threading.Thread(target=self._analysis_loop, name='live-recognition', daemon=True)]
+        self._threads = [threading.Thread(target=self._capture_loop, name=f'live-capture-{self.camera_id}', daemon=True),
+                         threading.Thread(target=self._analysis_loop, name=f'live-rec-{self.camera_id}', daemon=True)]
         for thread in self._threads:
             thread.start()
         store.audit(actor, 'Cámara', f'Inició el reconocimiento facial en vivo en {self.camera_id}',
@@ -136,6 +276,8 @@ class LiveRecognition:
         import cv2
         failures = 0
         while not self._stop.is_set():
+            if self._capture is None:
+                break
             ok, frame = self._capture.read()
             if not ok:
                 failures += 1
@@ -147,7 +289,7 @@ class LiveRecognition:
                 self.error, self.status = None, 'RECONOCIENDO'
             failures = 0
             with self._lock:
-                self._frame = cv2.flip(frame, 1)  # mirror view, as people expect from a webcam
+                self._frame = cv2.flip(frame, 1)  # mirror view
 
     def _analysis_loop(self):
         while not self._stop.is_set():
@@ -284,4 +426,53 @@ class LiveRecognition:
         return evidence.face_captures
 
 
-live = LiveRecognition()
+# Two independent slots: the laptop's own camera and an external USB webcam.
+live_1 = LiveRecognition(config.DEFAULT_CAMERA_ID, config.CAMERA_INDEX, name='Cámara 1 · Laptop', kind='laptop')
+live_2 = LiveRecognition(config.SECOND_CAMERA_ID, config.CAMERA_INDEX_2, name='Cámara 2 · Webcam USB', kind='usb')
+
+# Default alias for backwards compatibility
+live = live_1
+
+LIVE_INSTANCES = [live_1, live_2]
+
+
+def get_live_for_camera(camera_id):
+    """The slot showing camera_id: the running one first, so a stopped slot never hides it."""
+    matches = [inst for inst in LIVE_INSTANCES if inst.camera_id == camera_id]
+    return next((inst for inst in matches if inst.running), matches[0] if matches else None)
+
+
+def running_for_camera(camera_id):
+    """The slot running on camera_id right now, or None. `live` is read at call time."""
+    for inst in [live, *LIVE_INSTANCES]:
+        if inst.running and inst.camera_id == camera_id:
+            return inst
+    return None
+
+
+def is_live_camera(camera_id):
+    """Returns True if the camera is one of the local equipment live cameras."""
+    return get_live_for_camera(camera_id) is not None
+
+
+class _AnyLiveCamera:
+    """Estado agregado de las dos ranuras, para enlazarlo desde la interfaz.
+
+    Permite que el aviso «CÁMARA EN VIVO» del encabezado se ate a un dato en lugar de
+    consultarse con un temporizador en cada página.
+    """
+
+    @property
+    def running(self):
+        return any(inst.running for inst in LIVE_INSTANCES)
+
+
+any_live = _AnyLiveCamera()
+
+
+def stop_all(actor=None):
+    """Stops all active live recognition cameras."""
+    for inst in LIVE_INSTANCES:
+        if inst.running:
+            inst.stop(actor)
+
