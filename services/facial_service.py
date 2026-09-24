@@ -29,8 +29,12 @@ def review_match(match_id, status):
 
     Un operador revisa en primer nivel; un supervisor resuelve lo que se le escaló. Sólo
     el operador puede escalar, porque enviarse trabajo a sí mismo no es una segunda revisión.
+    Validar exige siempre al supervisor: un operador puede descartar o escalar, nunca dar
+    por buena una coincidencia él solo.
     """
-    if status == 'En revisión':
+    if status == 'Validada por operador':
+        actor = require('matches.supervise')
+    elif status == 'En revisión':
         actor = require('matches.review')
     else:
         actor = require('matches.supervise') if can('matches.supervise') else require('matches.review')

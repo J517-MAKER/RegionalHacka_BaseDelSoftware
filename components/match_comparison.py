@@ -5,6 +5,7 @@ from components.status_badge import StatusBadge
 from services.cases_service import get_case
 from services.cameras_service import get_camera
 from services.facial_service import get_detection,validate_match,reject_match,request_review
+from services.face_engine import display_level
 from services.users_service import can
 
 
@@ -24,14 +25,15 @@ def MatchComparison(match,on_change=None):
                 ui.image(source).props('fit=contain')
     with ui.element('div').classes('field-grid my-3'):
         for label,value in [('Cámara / ubicación',f'{camera.id} · {camera.name}'),('Fecha y hora',d.timestamp),
-                             ('Nivel de similitud',f'{d.similarity} %'),('Calidad de imagen',d.quality)]:
+                             ('Nivel de similitud',display_level(d.similarity)),('Calidad de imagen',d.quality)]:
             InfoPair(label,value)
     ui.label('El nivel de similitud es una referencia del sistema y no constituye una identificación definitiva.').classes('notice')
     # The operator reviews at first level and may escalate; the supervisor only resolves what
     # was escalated to them, and cannot escalate it back. An administrator just reads.
     if can('matches.review'):
-        actions=[('Validar como posible coincidencia',validate_match,'Posible coincidencia validada por operador.'),
-                 ('Descartar',reject_match,'Coincidencia descartada.'),
+        # El operador nunca valida solo: descarta lo que no procede, o lo escala para que
+        # un supervisor resuelva. Validar es una decisión de segundo nivel.
+        actions=[('Descartar',reject_match,'Coincidencia descartada.'),
                  ('Solicitar revisión',request_review,'Evento enviado a revisión.')]
     elif can('matches.supervise') and match.status=='En revisión':
         actions=[('Resolver: validar coincidencia',validate_match,'Coincidencia validada en supervisión.'),

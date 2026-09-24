@@ -44,11 +44,14 @@ def face_crop_data_url(frame, bbox, margin=.35, height=320):
 
 
 def draw_face(image, face):
-    """Box plus a filled label: folio, name, similarity and level, or «Sin coincidencia»."""
+    """Box plus a filled label: folio, name and level, or «Sin coincidencia».
+
+    Nunca se dibuja el porcentaje crudo junto al nombre: en la pantalla de la cámara se lee
+    como una identificación, y aquí nadie la ha revisado todavía."""
     import cv2
     x1, y1, x2, y2 = face['bbox']
     color = face_engine.LEVEL_COLORS[face['level']]
-    label = (f'{face["case_id"]} {ascii_label(face["name"])} {face["similarity"]:.0%} {face["level"]}'
+    label = (f'{face["case_id"]} {ascii_label(face["name"])} {face["level"]}'
              if face['level'] else 'Sin coincidencia')
     cv2.rectangle(image, (x1, y1), (x2, y2), color, 2)
     # Sized for the compact 480-px view of the page.

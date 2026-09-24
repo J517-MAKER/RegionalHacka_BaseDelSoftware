@@ -101,7 +101,7 @@ def live_page():
                     with ui.column().classes('gap-1 flex-1 min-w-0'):
                         ui.label(f'{detection.case_id} · {clean(item["name"])}').classes('text-xs font-medium')
                         ui.label(f'{detection.timestamp[11:]} · {detection.camera_id} · similitud '
-                                 f'{detection.similarity} %').classes('text-[10px] muted')
+                                 f'{item["level"]}').classes('text-[10px] muted')
                         StatusBadge(match.status)
                     ui.button('Revisar', on_click=lambda d=detection, m=match:
                               ui.navigate.to(f'/matches?case_id={d.case_id}&match_id={m.id}')) \
@@ -306,7 +306,7 @@ def live_page():
             for item in new:
                 state['seen'].add(item['detection'].id)
                 ui.notify(f'Posible coincidencia: {item["detection"].case_id} · {clean(item["name"])} '
-                          f'({item["detection"].similarity} %) en {item["detection"].camera_id}',type='warning', position='top-right', timeout=6000)
+                          f'({item["level"]}) en {item["detection"].camera_id}',type='warning', position='top-right', timeout=6000)
             if new:
                 detections.refresh()
 

@@ -261,14 +261,24 @@ class DemoFlowTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(store.cases[-1].reference_status,'Sin referencia fotográfica')
 
                 await user.open('/matches?match_id=MAT-001')
-                user.find('Validar como posible coincidencia').click()
-                self.assertEqual(store.matches[0].reviewed_by,'Operador01')
-                self.assertEqual(store.detections[0].status,'Validada por operador')
-                await user.should_see('Revisión registrada: Operador01')
+                # El operador nunca valida solo: sólo puede descartar o escalar.
+                with self.assertRaises(AssertionError):
+                    user.find('Validar como posible coincidencia')
                 user.find('Descartar').click()
                 self.assertEqual(store.detections[0].status,'Descartada')
                 user.find('Solicitar revisión').click()
                 self.assertEqual(store.matches[0].status,'En revisión')
+
+                # Sólo un supervisor puede resolver lo escalado como válido.
+                with user:
+                    switch_demo_user('USR-03')
+                await user.open('/matches?match_id=MAT-001')
+                user.find('Resolver: validar coincidencia').click()
+                self.assertEqual(store.matches[0].reviewed_by,'Supervisor01')
+                self.assertEqual(store.detections[0].status,'Validada por operador')
+                await user.should_see('Revisión registrada: Supervisor01')
+                with user:
+                    switch_demo_user('USR-01')
 
                 await user.open('/cameras?camera_id=CAM-010')
                 await user.should_see('Conexión perdida.')

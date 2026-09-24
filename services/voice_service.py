@@ -138,9 +138,10 @@ def database_reachable():
 def register_capture_in_database(event):
     """Optional PostgreSQL persistence from the database module (docker-compose.yml).
 
-    The 512-d vector is the real face in view when live recognition runs on that camera,
-    and simulated otherwise. The database is optional: a missing driver or container must
-    never interrupt a detection.
+    Sólo se guarda cuando hay un rostro real en cuadro: un vector inventado terminaría
+    indistinguible de una huella real en las búsquedas por similitud de pgvector, y eso
+    es fabricar evidencia. Sin rostro real, no se escribe nada en la base. La base es
+    opcional: un controlador o contenedor ausente nunca debe interrumpir una detección.
     """
     if not _database_enabled[0]:
         return None
@@ -149,15 +150,15 @@ def register_capture_in_database(event):
         print('Base de datos no disponible: el evento se conserva en memoria y en evidencia.')
         return None
     try:
-        import numpy as np
         from services.db_service import guardar_captura_rostro
         from services.live_recognition_service import running_for_camera
         inst = running_for_camera(event.camera_id)
         face = inst.current_face(event.camera_id) if inst else None
-        embedding = face['embedding'] if face else np.random.rand(512).astype('float32')
+        if not face:
+            return None  # sin rostro real no se inventa un embedding
         captura = guardar_captura_rostro(codigo_camara=event.camera_id,
-                                         embedding=embedding.tolist(),
-                                         ruta_foto=f'assets/capturas/alerta_{event.id}.jpg',
+                                         embedding=face['embedding'].tolist(),
+                                         ruta_foto=None,  # no se guarda ningún archivo en ese momento: no inventar la ruta
                                          tipo_evento=event.subtype or 'ALERTA_AUDIO')
     except Exception:
         captura = None
