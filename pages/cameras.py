@@ -5,9 +5,64 @@ from components.camera_feed import CameraFeed
 from components.status_badge import StatusBadge
 from components.person_profile import InfoPair
 from components.states import EmptyState
-from services.cameras_service import get_cameras, get_camera, get_nearby_cameras, get_camera_events
+from services.cameras_service import (camera_listening_state, evidence_summary, get_cameras, get_camera,
+                                      get_camera_evidence, get_camera_events, get_nearby_cameras,
+                                      last_analysis)
 from services.live_recognition_service import is_live_camera, get_live_for_camera
+from services.users_service import can
 import config
+
+
+def listening_panel(camera):
+    """Lo que esta cámara está escuchando ahora mismo.
+
+    El micrófono forma parte de la cámara: quien la abre tiene que ver aquí si está escuchando y
+    qué fue lo último que analizó, sin cambiar de pantalla.
+    """
+    state = camera_listening_state(camera.id)
+    ui.label('ESCUCHA DE AUXILIO').classes('eyebrow mt-3')
+    if not state['analyzed']:
+        ui.label(state['detail']).classes('text-xs muted')
+        return
+    with ui.row().classes('items-center gap-2'):
+        ui.element('span').classes('status-dot ' + ('green' if state['listening'] else ''))
+        ui.label(state['state']).classes('text-sm font-medium')
+    ui.label('Escucha continua desde que arranca NEXO. Sólo se conservan los segundos alrededor '
+             'de una posible solicitud de auxilio; el resto se sobrescribe en memoria.').classes('text-xs muted')
+    result = last_analysis(camera.id)
+    if result:
+        InfoPair('Último análisis', f'{result["headline"]} · {result["classification"]}')
+        ui.label(f'“{result["transcript"]}”').classes('text-xs p-2 bg-[#f5f7f8] w-full')
+
+
+def evidence_panel(camera):
+    """La evidencia que se conservó en esta cámara: imagen, audio y video del mismo evento."""
+    events = get_camera_evidence(camera.id, 5)
+    ui.label('EVIDENCIA CONSERVADA EN ESTA CÁMARA').classes('eyebrow mt-3')
+    if not events:
+        ui.label('Sin eventos de auxilio registrados en esta cámara.').classes('text-xs muted')
+        return
+    for event in events:
+        with ui.column().classes('w-full gap-1 p-2 border border-[#edf0f2] rounded'):
+            with ui.row().classes('items-center justify-between w-full'):
+                ui.label(event.event_id).classes('mono text-[11px]')
+                StatusBadge(event.review_status)
+            ui.label(f'“{event.transcript_original}”').classes('text-xs')
+            ui.label(f'{event.created_at} · {evidence_summary(event)}').classes('text-[11px] muted')
+            if event.video_camera_id and event.video_camera_id != event.camera_id:
+                ui.label(f'El audio es de {event.camera_id}; el video, de {event.video_camera_id}.').classes(
+                    'text-[10px] muted')
+            # El propósito del evento es saber dónde se vio por última vez a la persona: la
+            # ubicación de la cámara es ese punto, y el trayecto continúa en el mapa.
+            ui.label(f'Última ubicación registrada: {event.location}').classes('text-[11px] muted')
+            with ui.row().classes('gap-1'):
+                ui.button('Abrir para revisión de una autoridad', icon='fact_check',
+                          on_click=lambda e=event: ui.navigate.to(f'/alerts?event_id={e.event_id}')).props(
+                    'flat dense no-caps')
+                if can('tracking.view'):
+                    ui.button('Seguimiento en el mapa', icon='route',
+                              on_click=lambda e=event: ui.navigate.to(f'/tracking?event_id={e.event_id}')).props(
+                        'flat dense no-caps')
 
 
 @ui.page('/cameras')
@@ -42,6 +97,8 @@ def cameras_page(camera_id: str = ''):
                     if camera.status == 'Desconectada':
                         ui.label('Conexión perdida. No fue posible conectar con la cámara.').classes('notice')
                         ui.button('Reintentar conexión', on_click=lambda: ui.notify('No fue posible conectar con la cámara. Servicio de demostración sin señal.', type='warning')).props('outline no-caps')
+                    listening_panel(camera)
+                    evidence_panel(camera)
                     ui.label('Eventos recientes').classes('section-title mt-3')
                     events = get_camera_events(cid)
                     for d in events:

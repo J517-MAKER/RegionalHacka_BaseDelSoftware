@@ -190,3 +190,8 @@ CAMERA_AUTOSTART_RETRY_SECONDS = 20
 # Si el análisis se queda más atrás que esto, se salta al presente en vez de arrastrar el
 # retraso: es preferible perder un fragmento antiguo que escuchar siempre con demora.
 AUDIO_MAX_LAG_SECONDS = 8
+
+# Cuánto tiempo la propia cámara sigue anunciando en pantalla que acaba de conservar evidencia
+# de una posible solicitud de auxilio. La detección no es una pantalla aparte: ocurre en la
+# cámara y se ve en la cámara.
+CAMERA_EVENT_NOTICE_SECONDS = int(os.getenv('NEXO_CAMERA_EVENT_NOTICE_SECONDS', '180'))

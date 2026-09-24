@@ -550,6 +550,13 @@ Si este entorno no tiene pip, usa el instalador local existente:
 El módulo funciona **únicamente con audio capturado del micrófono**. La interfaz
 no ofrece ningún campo para escribir frases ni simular eventos.
 
+La escucha no es una pantalla aparte: pertenece a la cámara. Sobre la imagen de cada
+cámara del equipo se lee su estado de escucha, y cuando oye una posible solicitud de
+auxilio la propia cámara anuncia que conservó ese instante. Al abrir la cámara en
+*Red de cámaras* aparecen su escucha, el último análisis y los eventos conservados
+—imagen, audio y video del mismo `event_id`— con el enlace para que una autoridad los
+revise y con la última ubicación registrada para continuar el seguimiento en el mapa.
+
 ```text
 Micrófono
   ↓ captura continua en un buffer circular en memoria
