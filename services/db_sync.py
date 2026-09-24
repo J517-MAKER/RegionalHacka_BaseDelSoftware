@@ -9,11 +9,13 @@ La aplicación trabaja con las listas de services/store.py. Este servicio:
 La base de datos es opcional: si el contenedor está apagado la aplicación sigue
 funcionando y el servicio vuelve a intentarlo solo.
 """
+import hashlib
 import logging
 import threading
 from datetime import date, datetime
 
 import config
+from models.audit_log import AuditLog
 from models.detection import Detection
 from models.match import Match
 from models.person import Person
@@ -76,6 +78,18 @@ def detection_row(detection, match):
             match.reviewed_at if match else None)
 
 
+def history_row(entry):
+    return (entry.timestamp, entry.user, entry.kind, entry.description, entry.case_id, entry.camera_id,
+            entry.result, entry.device)
+
+
+def history_key(row):
+    """Identifica un registro de bitácora por su contenido, no por su posición: así una
+    misma entrada nunca se duplica al volver a sincronizar, sin importar qué instancia
+    la generó."""
+    return hashlib.sha1('|'.join(str(value) for value in row).encode('utf-8')).hexdigest()
+
+
 # ---------------------------------------------------------------------- service
 class DatabaseSync:
     def __init__(self):
@@ -84,6 +98,7 @@ class DatabaseSync:
         self.last_sync = None
         self._ready = False
         self._seen = {}  # ('case'|'photos'|'camera'|'detection', key) -> last saved row
+        self._log_keys = set()  # bitácora ya reflejada en memoria (propia o de otro dispositivo)
         self._stop = threading.Event()
         self._thread = None
         self._lock = threading.Lock()
@@ -190,6 +205,32 @@ class DatabaseSync:
             detection = next((d for d in store.detections if d.id == match.detection_id), None)
             if detection and detection.status != match.status and detection.status != 'Pendiente de validación':
                 match.status = detection.status
+        self._load_history(conn)
+
+    def _load_history(self, conn):
+        """Trae la bitácora guardada por cualquier instancia del equipo y evita duplicar
+        lo que ya está en memoria, incluidos los seis registros de demostración.
+
+        self._log_keys sólo debe contener claves confirmadas en la base de datos (las
+        que se leen aquí, o las que _save_history ya insertó): un registro que sólo
+        existe en memoria todavía no debe marcarse como "ya sincronizado", o
+        _save_history nunca llegaría a insertarlo."""
+        local_keys = {history_key(history_row(entry)) for entry in store.logs}
+        with conn.cursor() as cur:
+            cur.execute('''SELECT fecha_hora, usuario, tipo, descripcion, caso_id, camara_id, resultado, dispositivo
+                           FROM historial_operaciones ORDER BY fecha_hora DESC, id DESC LIMIT 2000''')
+            rows = cur.fetchall()
+        for fecha_hora, user, kind, description, case_id, camera_id, result, device in rows:
+            timestamp = fecha_hora.strftime('%Y-%m-%d %H:%M:%S') if hasattr(fecha_hora, 'strftime') else str(fecha_hora)
+            row = (timestamp, user, kind, description, case_id, camera_id, result, device)
+            key = history_key(row)
+            self._log_keys.add(key)  # confirmado en la base de datos
+            if key in local_keys:
+                continue  # ya está en memoria (p. ej. los seis registros de demostración)
+            store.logs.append(AuditLog(*row))
+        # No se reordena store.logs: history_service.get_history() ya ordena por fecha al
+        # leer, y reordenar aquí competiría con el insert(0, ...) de store.audit() en el
+        # hilo principal.
 
     # ------------------------------------------------------------------ save
     def _changed(self, kind, key, row):
@@ -257,7 +298,36 @@ class DatabaseSync:
                                        revisado_por = EXCLUDED.revisado_por, revisado_en = EXCLUDED.revisado_en,
                                        updated_at = NOW()''',
                                 (row[0], row[1], row[1], row[2], row[2], *row[3:]))
+            self._save_history(cur)
         conn.commit()
+
+    def _save_history(self, cur):
+        """Bitácora compartida: cada instancia guarda aquí lo que registró y trae lo que
+        registraron las demás, así todo el equipo termina viendo el mismo historial."""
+        for entry in list(store.logs):
+            row = history_row(entry)
+            key = history_key(row)
+            if key in self._log_keys:
+                continue
+            cur.execute('''INSERT INTO historial_operaciones
+                               (fecha_hora, usuario, tipo, descripcion, caso_id, camara_id, resultado,
+                                dispositivo, clave_unica)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                           ON CONFLICT (clave_unica) DO NOTHING''', (*row, key))
+            self._log_keys.add(key)
+        cur.execute('''SELECT fecha_hora, usuario, tipo, descripcion, caso_id, camara_id, resultado, dispositivo
+                       FROM historial_operaciones ORDER BY fecha_hora DESC, id DESC LIMIT 2000''')
+        new_entries = []
+        for fecha_hora, user, kind, description, case_id, camera_id, result, device in cur.fetchall():
+            timestamp = fecha_hora.strftime('%Y-%m-%d %H:%M:%S') if hasattr(fecha_hora, 'strftime') else str(fecha_hora)
+            row = (timestamp, user, kind, description, case_id, camera_id, result, device)
+            key = history_key(row)
+            if key in self._log_keys:
+                continue
+            self._log_keys.add(key)
+            new_entries.append(AuditLog(*row))
+        if new_entries:  # llegó de otro dispositivo del equipo desde el último ciclo
+            store.logs.extend(new_entries)
 
 
 database = DatabaseSync()

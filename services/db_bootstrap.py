@@ -116,6 +116,25 @@ CREATE TABLE IF NOT EXISTS historial_busquedas (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Bitácora general de la aplicación (services/store.py:logs), compartida por todo el
+-- equipo: cada instancia de NEXO guarda aquí sus registros y lee los de las demás, así
+-- que la auditoría sobrevive a un reinicio y no depende de quién cerró su sesión.
+-- clave_unica evita duplicados si el mismo registro local se vuelve a sincronizar.
+CREATE TABLE IF NOT EXISTS historial_operaciones (
+    id BIGSERIAL PRIMARY KEY,
+    fecha_hora TIMESTAMP NOT NULL,
+    usuario TEXT NOT NULL,
+    tipo TEXT NOT NULL,
+    descripcion TEXT NOT NULL,
+    caso_id TEXT DEFAULT '—',
+    camara_id TEXT DEFAULT '—',
+    resultado TEXT DEFAULT 'Registrado',
+    dispositivo TEXT DEFAULT '—',
+    clave_unica TEXT UNIQUE NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS historial_operaciones_fecha_idx ON historial_operaciones (fecha_hora DESC);
+
 CREATE INDEX IF NOT EXISTS embeddings_persona_vector_idx
     ON embeddings_persona USING hnsw (embedding vector_cosine_ops);
 

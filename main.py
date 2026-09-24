@@ -39,9 +39,25 @@ def start_voice_retention():
     background_tasks.create(expire_voice_transcripts())
 
 
+def start_database_sync():
+    """Conecta con la base de datos compartida por el equipo (services/db_sync.py). Si el
+    contenedor de PostgreSQL no está disponible, NEXO sigue funcionando sólo en memoria."""
+    if not config.DB_SYNC_ENABLED:
+        return
+    from services.db_sync import database
+    database.start()
+
+
+def stop_database_sync():
+    from services.db_sync import database
+    database.stop()
+
+
 if not app.is_started:  # the interface tests re-execute this module
     app.on_startup(start_voice_retention)
+    app.on_startup(start_database_sync)
     app.on_shutdown(stop_live_cameras)  # libera las dos cámaras al detener el servidor
+    app.on_shutdown(stop_database_sync)
 
 
 @ui.page('/')

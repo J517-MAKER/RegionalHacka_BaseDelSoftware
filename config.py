@@ -1,4 +1,5 @@
 import os
+import socket
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -59,6 +60,9 @@ SECOND_CAMERA_ID = os.getenv('NEXO_CAMERA_2', 'CAM-007')
 # Base de datos PostgreSQL (docker-compose.yml). Opcional: sin contenedor, NEXO trabaja en memoria.
 DB_SYNC_ENABLED = os.getenv('NEXO_DB_SYNC', '1') == '1'
 DB_SYNC_SECONDS = float(os.getenv('NEXO_DB_SYNC_SECONDS', '5'))
+# Identifica de qué equipo vino cada registro de la bitácora compartida (varias personas,
+# varias instancias, misma base de datos).
+DEVICE_ID = os.getenv('NEXO_DEVICE_ID') or socket.gethostname()
 
 IMPORT_DIR = BASE_DIR / 'imports'
 IMPORT_DOCUMENTS_DIR = IMPORT_DIR / 'documents'

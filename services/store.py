@@ -1,5 +1,6 @@
 """Repositorio en memoria. Único punto que conoce los datos de demostración."""
 from datetime import datetime
+import config
 from mocks.alerts import seed_alerts
 from mocks.cameras import seed_cameras
 from mocks.cases import seed_cases
@@ -43,4 +44,4 @@ def now():
 
 
 def audit(user, kind, description, case_id='—', camera_id='—', result='Registrado'):
-    logs.insert(0, AuditLog(now(), user, kind, description, case_id, camera_id, result))
+    logs.insert(0, AuditLog(now(), user, kind, description, case_id, camera_id, result, config.DEVICE_ID))

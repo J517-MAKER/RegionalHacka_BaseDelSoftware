@@ -32,7 +32,7 @@ def history_page():
             if not records:
                 EmptyState()
                 return
-            columns=[{'name':key,'field':key,'label':label,'align':'left','sortable':True} for key,label in [('timestamp','Fecha y hora'),('user','Usuario'),('kind','Tipo'),('description','Descripción'),('case_id','Caso relacionado'),('camera_id','Cámara'),('result','Resultado')]]
+            columns=[{'name':key,'field':key,'label':label,'align':'left','sortable':True} for key,label in [('timestamp','Fecha y hora'),('user','Usuario'),('kind','Tipo'),('description','Descripción'),('case_id','Caso relacionado'),('camera_id','Cámara'),('result','Resultado'),('device','Dispositivo')]]
             ui.table(columns=columns,rows=[dict(id=i,**asdict(r)) for i,r in enumerate(records)],row_key='id',pagination=12).classes('w-full')
         with ui.element('div').classes('toolbar'):
             search=ui.input('Buscar usuario, caso o descripción',on_change=lambda:table.refresh()).props('outlined dense clearable')

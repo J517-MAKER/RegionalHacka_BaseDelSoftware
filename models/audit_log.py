@@ -10,3 +10,4 @@ class AuditLog:
     case_id: str = '—'
     camera_id: str = '—'
     result: str = 'Registrado'
+    device: str = '—'

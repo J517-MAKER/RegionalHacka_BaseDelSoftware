@@ -130,7 +130,8 @@ FastAPI está disponible a través de `nicegui.app` si después se necesitan end
 
 - Todos los nombres son ficticios. Los retratos y capturas son **ilustraciones vectoriales sintéticas**, no fotografías de personas reales. El módulo de voz trabaja exclusivamente con audio real del micrófono: no existen campos para escribir frases de prueba.
 - El módulo de voz permite micrófono local y transcripción con faster-whisper. El reconocimiento facial es real sobre fotografías de fichas y casos y sobre la webcam del equipo (`/live`); la red CCTV y el seguimiento continúan simulados. Los estados y similitudes son ejemplos para revisión humana. Confirmar un evento no confirma un delito.
-- Los cambios y la bitácora viven en memoria del proceso, compartidos por las sesiones de demostración. **Se restablecen al reiniciar.** El almacenamiento de sesión de NiceGUI está en `.nicegui/`, excluido de Git.
+- La aplicación trabaja en memoria del proceso; sin base de datos, los cambios y la bitácora **se restablecen al reiniciar**, y cada instancia sólo ve lo suyo. El almacenamiento de sesión de NiceGUI está en `.nicegui/`, excluido de Git.
+- Con PostgreSQL disponible (ver «Base de datos compartida del equipo» abajo), NEXO sincroniza casos, cámaras, detecciones y la bitácora cada `DB_SYNC_SECONDS`, así que sobreviven a un reinicio y las cuatro personas del equipo ven el mismo historial sin importar desde qué instancia se generó.
 - El selector de cuenta sirve para demostrar roles; **no es autenticación de producción**. La app no incluye SSO, gestión de credenciales, retención de evidencias ni auditoría inmutable. Estos puntos deben implementarse en los adaptadores de seguridad/backend antes de usar datos reales.
 - Las preferencias de configuración se guardan como valores de referencia; no activan servicios ni políticas reales.
 - Las escenas CCTV son estáticas. La actualización del monitor consulta los servicios simulados cada 15 segundos y la tabla de alertas cada 10 segundos.
@@ -148,6 +149,42 @@ El arranque y las once rutas también fueron comprobados mediante HTTP. La revis
 
 Referencia del framework: [documentación oficial de NiceGUI](https://nicegui.io/documentation).
 
+## Base de datos compartida del equipo
+
+`docker-compose.yml` levanta PostgreSQL con pgvector y, en el puerto `8082`, Adminer
+para revisar las tablas desde el navegador. Es **opcional**: sin ella, NEXO funciona
+igual que antes, sólo en memoria y por instancia.
+
+```bash
+docker compose up -d postgres_db
+```
+
+Al arrancar, cada instancia se conecta sola (`services/db_sync.py`, revisado cada
+`DB_SYNC_SECONDS`, 5 s por defecto) y `services/db_bootstrap.py` crea o actualiza el
+esquema (`personas`, `camaras`, `detecciones`, `historial_operaciones`, etc.) sin
+borrar nada existente. Si el equipo son varias personas con instancias separadas, las
+cuatro deben apuntar a la **misma** base para compartir información: en las que no son
+el anfitrión, define `DATABASE_URL` con la IP de esa máquina antes de `python main.py`
+(`docker-compose.yml` ya expone `5432` a la red, no sólo a `localhost`):
+
+```bash
+export DATABASE_URL="dbname=db_desaparecidos user=admin password=mi_password_seguro host=<IP_DEL_ANFITRION> port=5432"
+python main.py
+```
+
+Se sincronizan casos, fotografías, cámaras y detecciones (última versión manda), y la
+**bitácora** (`/history`) de forma distinta porque es un registro histórico, no un
+estado que se sobrescribe: cada acción se guarda una sola vez (tabla
+`historial_operaciones`, con la columna «Dispositivo» que identifica de qué equipo
+vino, `NEXO_DEVICE_ID` o el nombre de host por defecto) y cada instancia trae también
+las que registraron las demás, así que las cuatro personas terminan viendo el mismo
+historial sin importar quién cerró su sesión. Desactívalo con `NEXO_DB_SYNC=0` si por
+algún motivo no quieres que una instancia sincronice.
+
+Sin conexión (contenedor apagado, sin red, credenciales incorrectas) la aplicación
+**no se cae**: sigue funcionando sólo en memoria, reintentando solo cada
+`DB_SYNC_SECONDS` y avisando en la consola del servidor
+(`services/db_sync.py:database.status` queda en `DESCONECTADA` o `ERROR`).
 
 ## Importar alertas de búsqueda (OCR)
 
