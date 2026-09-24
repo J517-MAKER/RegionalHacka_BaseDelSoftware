@@ -8,6 +8,7 @@ NAV_GROUPS = [
     ('OPERACIÓN', ('monitor.view',), [
         ('Centro de monitoreo','/monitor','space_dashboard','monitor.view'),
         ('Casos de búsqueda','/cases','folder_open','cases.view'),
+        ('Búsqueda por ficha','/search','person_search','cases.import'),
         ('Cámaras','/cameras','videocam','cameras.view'),
         ('Reconocimiento en vivo','/live','face','live.view'),
         ('Coincidencias','/matches','compare','matches.view'),

@@ -65,6 +65,11 @@ def model_downloaded():
     return folder.is_dir() and any(folder.glob('*.onnx'))
 
 
+def loaded():
+    """True cuando el modelo ya está en memoria: analizar una foto tarda sólo milisegundos."""
+    return _app is not None
+
+
 def ready():
     """True cuando se puede analizar sin descargar nada: el modelo ya está en memoria o en disco.
 

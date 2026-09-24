@@ -29,7 +29,7 @@ app.add_static_files('/evidence/frames',str(config.EVIDENCE_DIR/'frames'))
 app.add_static_files('/imports',str(config.IMPORT_DIR))
 
 from pages import (monitor,cases,import_alert,case_detail,cameras,live,matches,tracking,alerts,voice,  # noqa: E402,F401
-                   history,users,settings,supervision)  # noqa: E402,F401
+                   history,users,settings,supervision,search)  # noqa: E402,F401
 from services.live_recognition_service import stop_all as stop_live_cameras  # noqa: E402
 
 
@@ -44,9 +44,23 @@ def start_voice_retention():
     background_tasks.create(expire_voice_transcripts())
 
 
+def start_local_database():
+    """Base local SQLite (data/nexo.db): lo registrado sobrevive a un reinicio sin Docker.
+    Se carga antes que todo lo demás para que las cámaras y la voz partan de lo guardado."""
+    from services.local_db import database, enabled
+    if enabled():
+        database.start()
+
+
+def stop_local_database():
+    from services.local_db import database, enabled
+    if enabled():
+        database.stop()
+
+
 def start_database_sync():
     """Conecta con la base de datos compartida por el equipo (services/db_sync.py). Si el
-    contenedor de PostgreSQL no está disponible, NEXO sigue funcionando sólo en memoria."""
+    contenedor de PostgreSQL no está disponible, NEXO sigue funcionando con su base local."""
     if not config.DB_SYNC_ENABLED:
         return
     from services.db_sync import database
@@ -75,12 +89,14 @@ def stop_continuous_monitoring():
 
 
 if not app.is_started:  # the interface tests re-execute this module
+    app.on_startup(start_local_database)
     app.on_startup(start_voice_retention)
     app.on_startup(start_database_sync)
     app.on_startup(start_continuous_monitoring)
-    app.on_shutdown(stop_live_cameras)  # libera las dos cámaras al detener el servidor
+    app.on_shutdown(stop_live_cameras)  # libera las cámaras al detener el servidor
     app.on_shutdown(stop_continuous_monitoring)
     app.on_shutdown(stop_database_sync)
+    app.on_shutdown(stop_local_database)  # al final: guarda también lo que registró el cierre
 
 
 @ui.page('/')

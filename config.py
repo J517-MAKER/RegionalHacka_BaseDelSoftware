@@ -9,10 +9,11 @@ def load_env_file(path=BASE_DIR / '.env'):
     """Variables locales (tokens) desde .env, que nunca se sube a git; las del sistema mandan."""
     if not path.exists():
         return
-    for line in path.read_text(encoding='utf-8').splitlines():
+    for line in path.read_text(encoding='utf-8-sig').splitlines():
         line = line.strip()
         if line and not line.startswith('#') and '=' in line:
             name, value = line.split('=', 1)
+            value = value.split(' #', 1)[0].split('\t#', 1)[0]  # comentario al final de la línea
             os.environ.setdefault(name.strip(), value.strip().strip('"').strip("'"))
 
 
@@ -80,8 +81,15 @@ PHYSICAL_CAMERA_POSITIONS = {
     THIRD_CAMERA_ID: parse_latlng(os.getenv('NEXO_CAMERA_3_LATLNG', '25.67860,-100.25730')),
 }
 
+# Base de datos local (SQLite, viene con Python): conserva todo entre reinicios sin Docker ni
+# instalaciones. Vive en data/ (excluida de git). Se desactiva con NEXO_LOCAL_DB=0.
+LOCAL_DB_ENABLED = os.getenv('NEXO_LOCAL_DB', '1') == '1'
+LOCAL_DB_PATH = Path(os.getenv('NEXO_LOCAL_DB_PATH', str(DATA_DIR / 'nexo.db')))
+LOCAL_DB_SAVE_SECONDS = float(os.getenv('NEXO_LOCAL_DB_SAVE_SECONDS', '3'))
+LOCAL_DB_MAX_LOGS = 20000
+
 # Importación de alertas de búsqueda: archivos temporales, nunca evidencia.
-# Base de datos PostgreSQL (docker-compose.yml). Opcional: sin contenedor, NEXO trabaja en memoria.
+# Base de datos PostgreSQL (docker-compose.yml). Opcional: sin contenedor, NEXO trabaja con la base local.
 DB_SYNC_ENABLED = os.getenv('NEXO_DB_SYNC', '1') == '1'
 DB_SYNC_SECONDS = float(os.getenv('NEXO_DB_SYNC_SECONDS', '5'))
 # Identifica de qué equipo vino cada registro de la bitácora compartida (varias personas,

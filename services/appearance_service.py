@@ -31,8 +31,12 @@ NEIGHBOURS = {('negro', 'gris'), ('gris', 'blanco'), ('azul', 'morado'), ('rojo'
               ('naranja', 'cafe'), ('rojo', 'cafe'), ('amarillo', 'naranja'), ('verde', 'azul')}
 # Prendas superiores: si la ficha las menciona, su color es el que se compara con el torso.
 UPPER_GARMENTS = ('playera', 'camisa', 'camiseta', 'blusa', 'sudadera', 'chamarra', 'chaqueta', 'sueter',
-                  'suéter', 'saco', 'chaleco', 'abrigo', 'top', 'jersey', 'polo', 'uniforme', 'vestido',
-                  'hoodie', 'rompevientos')
+                  'saco', 'chaleco', 'abrigo', 'top', 'jersey', 'polo', 'uniforme', 'vestido', 'hoodie',
+                  'rompevientos', 'gabardina')
+# Prendas y accesorios que no se ven en el torso: su color no se compara con él.
+OTHER_GARMENTS = ('pantalon', 'pantalones', 'jeans', 'short', 'shorts', 'falda', 'calzado', 'zapatos', 'zapato',
+                  'tenis', 'botas', 'bota', 'sandalias', 'huaraches', 'calcetas', 'mallas', 'bermuda', 'bermudas',
+                  'leggins', 'gorra', 'sombrero', 'mochila', 'bolsa', 'lentes', 'cinturon')
 
 
 def _plain(text):
@@ -50,8 +54,11 @@ def declared_colors(text, upper_only=True):
         if not family:
             continue
         everything.append(family)
-        nearby = ' '.join(words[max(0, index - 3):index + 1])
-        if any(_plain(garment).strip() in nearby.split() for garment in UPPER_GARMENTS):
+        # La prenda a la que se refiere el color es la más cercana antes de él
+        # («chaqueta azul, pantalón oscuro»: el oscuro es del pantalón).
+        garment = next((w for w in reversed(words[max(0, index - 3):index])
+                        if w in UPPER_GARMENTS or w in OTHER_GARMENTS), None)
+        if garment in UPPER_GARMENTS:
             upper.append(family)
     chosen = upper if upper_only and upper else everything
     return list(dict.fromkeys(chosen))

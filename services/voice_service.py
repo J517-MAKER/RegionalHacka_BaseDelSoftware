@@ -147,7 +147,7 @@ def register_capture_in_database(event):
         return None
     if not database_reachable():
         _database_enabled[0] = False
-        print('Base de datos no disponible: el evento se conserva en memoria y en evidencia.')
+        print('Base compartida (PostgreSQL) no disponible: el evento se conserva en la base local y en evidence/.')
         return None
     try:
         from services.db_service import guardar_captura_rostro
@@ -165,7 +165,7 @@ def register_capture_in_database(event):
     if captura is None:
         # Sin contenedor ni controlador no se reintenta: la detección no puede esperar a la red.
         _database_enabled[0] = False
-        print('Base de datos no disponible: el evento se conserva en memoria y en evidencia.')
+        print('Base compartida (PostgreSQL) no disponible: el evento se conserva en la base local y en evidence/.')
     return captura
 
 

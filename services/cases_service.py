@@ -31,7 +31,24 @@ def create_case(data):
                       reference_status='Referencia fotográfica registrada' if person.photos else 'Sin referencia fotográfica')
     store.cases.append(case)
     store.audit(actor,'Búsqueda','Registró caso y solicitó procesamiento simulado',case.id)
+    look_back(case.id)
     return case
+
+
+def look_back(case_id):
+    """Una ficha nueva (o una foto nueva) se compara con lo que las cámaras ya guardaron.
+
+    Sólo si el modelo facial ya está en memoria: así registrar un caso nunca espera a que
+    cargue. Si no, la ficha se cotejará con la siguiente búsqueda o en vivo por las cámaras.
+    """
+    from services import face_engine
+    if not face_engine.loaded():
+        return []
+    from services.search_matching_service import retro_search_new_case
+    try:
+        return retro_search_new_case(case_id)
+    except Exception:
+        return []
 
 
 def photo_data_url(content, content_type):
@@ -52,3 +69,4 @@ def add_case_photo(case_id,content,content_type):
     case.person.photos.append(photo_data_url(content,content_type))
     case.reference_status='Referencia fotográfica registrada'
     store.audit(actor,'Búsqueda','Añadió fotografía de referencia de prueba',case_id)
+    look_back(case_id)

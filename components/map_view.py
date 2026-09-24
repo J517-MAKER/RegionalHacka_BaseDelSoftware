@@ -16,6 +16,10 @@ COLORS = {
 ui.add_head_html("""
 <script src='https://api.mapbox.com/mapbox-gl-js/v3.31.0/mapbox-gl.js' crossorigin='anonymous'></script>
 <link href='https://api.mapbox.com/mapbox-gl-js/v3.31.0/mapbox-gl.css' rel='stylesheet' crossorigin='anonymous' />
+<!-- Sin token, Mapbox GL v3 no dibuja nada (ni siquiera teselas de terceros): MapLibre, su fork
+     libre con la misma API, dibuja el mapa con teselas de CARTO en los equipos sin .env. -->
+<script src='https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.js' crossorigin='anonymous'></script>
+<link href='https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl.css' rel='stylesheet' crossorigin='anonymous' />
 <style>
   /* ── User location marker: teal pulsing dot ── */
   /* ── Tu ubicación: punto azul parpadeante con onda expansiva ──
@@ -211,6 +215,73 @@ ui.add_head_html("""
     border: 1.5px solid rgba(0,0,0,0.15);
     box-shadow: 0 0 6px var(--dot-glow, rgba(50,120,138,0.5));
   }
+
+  /* ── Las mismas reglas para MapLibre (mapa sin token) ── */
+  /* ── Clean light popups ── */
+  .maplibregl-popup-content {
+    background: rgba(255, 255, 255, 0.96) !important;
+    backdrop-filter: blur(16px) saturate(180%);
+    -webkit-backdrop-filter: blur(16px) saturate(180%);
+    color: #1E293B !important;
+    border-radius: 12px !important;
+    padding: 14px 18px !important;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.12), 0 0 1px rgba(50,120,138,0.3) !important;
+    border: 1px solid rgba(50,120,138,0.25) !important;
+    font-family: 'Inter', 'Segoe UI', system-ui, sans-serif !important;
+    font-size: 13px !important;
+  }
+  .maplibregl-popup-content b {
+    color: #32788A;
+    font-size: 14px;
+  }
+  .maplibregl-popup-anchor-bottom .maplibregl-popup-tip {
+    border-top-color: rgba(255, 255, 255, 0.96) !important;
+  }
+  .maplibregl-popup-anchor-top .maplibregl-popup-tip {
+    border-bottom-color: rgba(255, 255, 255, 0.96) !important;
+  }
+  .maplibregl-popup-anchor-left .maplibregl-popup-tip {
+    border-right-color: rgba(255, 255, 255, 0.96) !important;
+  }
+  .maplibregl-popup-anchor-right .maplibregl-popup-tip {
+    border-left-color: rgba(255, 255, 255, 0.96) !important;
+  }
+  .maplibregl-popup-close-button {
+    color: #64748B !important;
+    font-size: 18px !important;
+    right: 6px !important;
+    top: 4px !important;
+  }
+  .maplibregl-popup-close-button:hover {
+    color: #32788A !important;
+  }
+  /* ── Navigation controls light styling ── */
+  .maplibregl-ctrl-group {
+    background: rgba(255,255,255,0.92) !important;
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(50,120,138,0.25) !important;
+    border-radius: 8px !important;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08) !important;
+  }
+  .maplibregl-ctrl-group button {
+    background: transparent !important;
+    border-color: rgba(50,120,138,0.12) !important;
+  }
+  .maplibregl-ctrl-group button + button {
+    border-top: 1px solid rgba(50,120,138,0.12) !important;
+  }
+  .maplibregl-ctrl-group button .maplibregl-ctrl-icon {
+    filter: none;
+  }
+  .maplibregl-ctrl-group button:hover .maplibregl-ctrl-icon {
+    filter: brightness(0.6);
+  }
+  .maplibregl-ctrl-attrib {
+    background: rgba(255,255,255,0.8) !important;
+    color: #64748b !important;
+    font-size: 10px !important;
+  }
+  .maplibregl-ctrl-attrib a { color: #475569 !important; }
 </style>
 """, shared=True)
 
@@ -287,9 +358,9 @@ ui.add_body_html("""
       var dot = document.createElement('div');
       dot.className = 'mapbox-marker-user';
       dot.innerHTML = '<span class="user-ring"></span><span class="user-core"></span>';
-      el._nexoUser = new mapboxgl.Marker({ element: dot, anchor: 'center' })
+      el._nexoUser = new el._gl.Marker({ element: dot, anchor: 'center' })
         .setLngLat([position.lng, position.lat])
-        .setPopup(new mapboxgl.Popup({ offset: 16 }).setHTML(popupHtml()))
+        .setPopup(new el._gl.Popup({ offset: 16 }).setHTML(popupHtml()))
         .addTo(el._nexoMap);
     } else {
       el._nexoUser.setLngLat([position.lng, position.lat]);
@@ -350,8 +421,8 @@ ui.add_body_html("""
       dot.style.backgroundColor = m.color;
       dot.style.setProperty('--marker-glow', m.color + '80');
       var statusIcon = m.status === 'En línea' ? '🟢' : m.status === 'Alerta' ? '🔴' : m.status === 'Posible coincidencia' ? '🟡' : '⚪';
-      var marker = new mapboxgl.Marker(dot).setLngLat([m.lng, m.lat])
-        .setPopup(new mapboxgl.Popup({ offset: 25 }).setHTML(
+      var marker = new el._gl.Marker(dot).setLngLat([m.lng, m.lat])
+        .setPopup(new el._gl.Popup({ offset: 25 }).setHTML(
           '<b>' + statusIcon + ' ' + m.id + '</b><br>' +
           '<span style="color:#334155">' + m.name + '</span><br>' +
           '<span style="color:' + m.color + ';font-weight:600;">' + m.status + '</span>'))
@@ -361,14 +432,159 @@ ui.add_body_html("""
     });
   }
 
+  // ── Trayecto estimado: paradas numeradas, tramos, dirección y última posición ──────────
+  var directionsCache = {};
+  function esc(text) {
+    return String(text == null ? '' : text).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  // Trayecto por calles entre dos cámaras (Mapbox Directions) o, sin token, línea recta.
+  function legGeometry(a, b, mode, token) {
+    var straight = [[a.lng, a.lat], [b.lng, b.lat]];
+    if (!token || mode === 'none') return Promise.resolve(straight);
+    var key = mode + ':' + a.lng.toFixed(5) + ',' + a.lat.toFixed(5) + ';' + b.lng.toFixed(5) + ',' + b.lat.toFixed(5);
+    if (directionsCache[key]) return Promise.resolve(directionsCache[key]);
+    var url = 'https://api.mapbox.com/directions/v5/mapbox/' + mode + '/' + a.lng + ',' + a.lat + ';' +
+              b.lng + ',' + b.lat + '?geometries=geojson&overview=full&access_token=' + encodeURIComponent(token);
+    return fetch(url).then(function (r) { return r.ok ? r.json() : null; }).then(function (data) {
+      var coords = data && data.routes && data.routes[0] && data.routes[0].geometry.coordinates;
+      directionsCache[key] = coords && coords.length > 1 ? [straight[0]].concat(coords, [straight[1]]) : straight;
+      return directionsCache[key];
+    }).catch(function () { return straight; });
+  }
+
+  function legFeature(route, leg, coords) {
+    var kind = leg.plausibility === 'NO_PLAUSIBLE' ? 'implausible' : (leg.possible ? 'possible' : 'ok');
+    return { type: 'Feature', properties: { kind: kind, color: route.color },
+             geometry: { type: 'LineString', coordinates: coords } };
+  }
+
+  function ensureRouteLayers(map) {
+    if (map.getSource('nexo-route')) return;
+    map.addSource('nexo-route', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    map.addLayer({ id: 'nexo-route-casing', type: 'line', source: 'nexo-route',
+      layout: { 'line-join': 'round', 'line-cap': 'round' },
+      paint: { 'line-color': '#ffffff', 'line-width': 8, 'line-opacity': 0.9 } });
+    map.addLayer({ id: 'nexo-route-solid', type: 'line', source: 'nexo-route', filter: ['==', ['get', 'kind'], 'ok'],
+      layout: { 'line-join': 'round', 'line-cap': 'round' },
+      paint: { 'line-color': ['get', 'color'], 'line-width': 4.5 } });
+    map.addLayer({ id: 'nexo-route-dashed', type: 'line', source: 'nexo-route', filter: ['==', ['get', 'kind'], 'possible'],
+      layout: { 'line-join': 'round' },
+      paint: { 'line-color': ['get', 'color'], 'line-width': 4, 'line-dasharray': [1.6, 1.2] } });
+    map.addLayer({ id: 'nexo-route-bad', type: 'line', source: 'nexo-route', filter: ['==', ['get', 'kind'], 'implausible'],
+      layout: { 'line-join': 'round' },
+      paint: { 'line-color': '#c0392b', 'line-width': 3.5, 'line-dasharray': [0.8, 1.4] } });
+  }
+
+  function drawRoute(el) {
+    var map = el._nexoMap;
+    if (!map) return;
+    if (!map.isStyleLoaded()) { setTimeout(function () { drawRoute(el); }, 200); return; }
+    (el._nexoRouteMarkers || []).forEach(function (marker) { marker.remove(); });
+    el._nexoRouteMarkers = [];
+    var route = null;
+    try { route = JSON.parse(el.dataset.route || 'null'); } catch (e) { route = null; }
+    var empty = { type: 'FeatureCollection', features: [] };
+    if (!route || !route.points || !route.points.length) {
+      if (map.getSource('nexo-route')) map.getSource('nexo-route').setData(empty);
+      return;
+    }
+    ensureRouteLayers(map);
+    var pts = route.points, stamp = el.dataset.route;
+    var token = (el.dataset.token || '').trim();
+    token = token.length > 10 ? token : '';
+    // Primero en línea recta, al instante; luego, si hay token, por calles.
+    map.getSource('nexo-route').setData({ type: 'FeatureCollection', features: route.legs.map(function (leg) {
+      return legFeature(route, leg, [[pts[leg.from].lng, pts[leg.from].lat], [pts[leg.to].lng, pts[leg.to].lat]]);
+    }) });
+    Promise.all(route.legs.map(function (leg) { return legGeometry(pts[leg.from], pts[leg.to], leg.mode, token); }))
+      .then(function (geometries) {
+        if (el.dataset.route !== stamp || !el._nexoMap || !map.getSource('nexo-route')) return;
+        map.getSource('nexo-route').setData({ type: 'FeatureCollection', features: route.legs.map(function (leg, i) {
+          return legFeature(route, leg, geometries[i]);
+        }) });
+      });
+    route.legs.forEach(function (leg) {
+      if (leg.plausibility === 'MISMO_LUGAR') return;
+      var a = pts[leg.from], b = pts[leg.to], bad = leg.plausibility === 'NO_PLAUSIBLE';
+      var arrow = document.createElement('div');
+      arrow.className = 'route-arrow' + (bad ? ' implausible' : '');
+      el._nexoRouteMarkers.push(new el._gl.Marker({ element: arrow, rotation: leg.heading, rotationAlignment: 'map' })
+        .setLngLat([(a.lng + b.lng) / 2, (a.lat + b.lat) / 2])
+        .setPopup(new el._gl.Popup({ offset: 12 }).setHTML(
+          '<b>Tramo ' + a.order + ' → ' + b.order + '</b><br>' + esc(leg.distance) + ' · ' + esc(leg.duration) +
+          '<br><span style="color:' + (bad ? '#c0392b' : '#32788A') + ';font-weight:600">' + esc(leg.label) + '</span>'))
+        .addTo(map));
+    });
+    var classes = { VALIDADA: 'validated', POSIBLE: 'possible', EVENTO: 'event', AVISTAMIENTO: 'sighting' };
+    pts.forEach(function (p) {
+      var stop = document.createElement('div');
+      stop.className = 'route-stop ' + (classes[p.status] || 'possible');
+      stop.textContent = p.order;
+      var when = p.first === p.last ? p.first : p.first + ' → ' + String(p.last).slice(11);
+      el._nexoRouteMarkers.push(new el._gl.Marker({ element: stop, anchor: 'center' }).setLngLat([p.lng, p.lat])
+        .setPopup(new el._gl.Popup({ offset: 16 }).setHTML(
+          '<b>' + p.order + ' · ' + esc(p.camera) + '</b><br>' + esc(p.name) + '<br>' + esc(when) +
+          '<br><span style="color:#64748B">' + esc(p.status_label) + (p.count > 1 ? ' · ' + p.count + ' observaciones' : '') +
+          '</span>'))
+        .addTo(map));
+    });
+    var ring = document.createElement('div');
+    ring.className = 'route-last';
+    ring.innerHTML = '<span></span>';
+    el._nexoRouteMarkers.push(new el._gl.Marker({ element: ring, anchor: 'center' })
+      .setLngLat([route.last.lng, route.last.lat]).addTo(map));
+    if (route.reference) {
+      var ref = document.createElement('div');
+      ref.className = 'mapbox-marker-camera';
+      ref.style.cssText = 'width:14px;height:14px;background:#475569;border-radius:3px;transform:rotate(45deg)';
+      el._nexoRouteMarkers.push(new el._gl.Marker({ element: ref, anchor: 'center' })
+        .setLngLat([route.reference.lng, route.reference.lat])
+        .setPopup(new el._gl.Popup({ offset: 12 }).setHTML('<b>Ficha de búsqueda</b><br>' + esc(route.reference.label)))
+        .addTo(map));
+    }
+    // Encuadre del trayecto la primera vez que llega a este mapa; después se respeta la vista.
+    // Se hace al terminar de cargar: antes, el encuadre inicial del mapa lo pisaría.
+    if (!el._nexoRouteFitted) {
+      el._nexoRouteFitted = true;
+      var fit = function () {
+        if (pts.length === 1) { map.jumpTo({ center: [pts[0].lng, pts[0].lat], zoom: 16 }); return; }
+        var bounds = new el._gl.LngLatBounds();
+        pts.forEach(function (p) { bounds.extend([p.lng, p.lat]); });
+        // El margen se adapta al tamaño: uno mayor que el propio mapa impediría encuadrar.
+        var padding = Math.max(10, Math.min(70, Math.floor(Math.min(el.clientWidth, el.clientHeight) / 5)));
+        map.fitBounds(bounds, { padding: padding, maxZoom: 17.5, duration: 0 });
+      };
+      fit();
+      if (!el._nexoLoaded) map.once('load', fit);  // por si el primer encuadre llegó antes de medir el mapa
+    }
+  }
+
+  // Vista inicial sobre el trayecto, para que el mapa nazca mostrando el recorrido; el
+  // encuadre exacto se hace al terminar de cargar (drawRoute), con el mapa ya medido.
+  function routeView(el) {
+    var route = null;
+    try { route = JSON.parse(el.dataset.route || 'null'); } catch (e) { route = null; }
+    if (!route || !route.points || !route.points.length) return null;
+    var lngs = route.points.map(function (p) { return p.lng; }), lats = route.points.map(function (p) { return p.lat; });
+    return { center: [(Math.min.apply(null, lngs) + Math.max.apply(null, lngs)) / 2,
+                      (Math.min.apply(null, lats) + Math.max.apply(null, lats)) / 2],
+             zoom: route.points.length === 1 ? 16 : 13 };
+  }
+
   function init(el) {
     if (el._nexoMap || !el.isConnected || !el.clientWidth) return;
     var data = JSON.parse(el.dataset.markers || '[]');
     var selected = data.find(function (m) { return m.selected; });
     var key = location.pathname + location.search + '|' + (el.dataset.selected || '');
     var token = (el.dataset.token || '').trim();
-    if (token.length > 10) mapboxgl.accessToken = token;
-    var useMapbox = token.length > 10;
+    var useMapbox = token.length > 10 && typeof mapboxgl !== 'undefined';
+    var GL = useMapbox ? mapboxgl : (typeof maplibregl !== 'undefined' ? maplibregl : null);
+    if (!GL) return;  // la librería todavía está cargando: el barrido periódico lo reintenta
+    if (useMapbox) mapboxgl.accessToken = token;
+    el._gl = GL;
 
     var options = {
       container: el,
@@ -378,16 +594,18 @@ ui.add_body_html("""
       renderWorldCopies: false,
       attributionControl: true
     };
-    var saved = views[key];
-    if (saved) { options.center = saved.center; options.zoom = saved.zoom; }
+    var saved = views[key], framed = routeView(el);
+    if (framed) { options.center = framed.center; options.zoom = framed.zoom; }
+    else if (saved) { options.center = saved.center; options.zoom = saved.zoom; }
     else if (selected) { options.center = [selected.lng, selected.lat]; options.zoom = 9; }
     else { options.bounds = MEXICO; options.fitBoundsOptions = { padding: 24 }; }
 
-    var map = new mapboxgl.Map(options);
+    var map = new GL.Map(options);
     el._nexoMap = map;
     maps.add(el);
-    map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'top-right');
+    map.addControl(new GL.NavigationControl({ showCompass: false }), 'top-right');
     map.on('moveend', function () { views[key] = { center: map.getCenter().toArray(), zoom: map.getZoom() }; });
+    map.on('load', function () { el._nexoLoaded = true; });
     map.on('style.load', function () {
       if (!useMapbox) return;
       whiten(map);
@@ -401,10 +619,13 @@ ui.add_body_html("""
     }
 
     drawMarkers(el);
+    drawRoute(el);
     userMarker(el);
     locateChip(el);
     startWatching();
   }
+
+  function glReady() { return typeof mapboxgl !== 'undefined' || typeof maplibregl !== 'undefined'; }
 
   function sweep() {
     maps.forEach(function (el) {
@@ -416,23 +637,33 @@ ui.add_body_html("""
   var pending = false;
   new MutationObserver(function (mutations) {
     mutations.forEach(function (m) {
-      if (m.type === 'attributes' && m.target._nexoMap) drawMarkers(m.target);
+      if (m.type !== 'attributes' || !m.target._nexoMap) return;
+      if (m.attributeName === 'data-route') drawRoute(m.target);
+      else drawMarkers(m.target);
     });
     if (pending) return;
     pending = true;
-    setTimeout(function () { pending = false; if (typeof mapboxgl !== 'undefined') sweep(); }, 50);
+    setTimeout(function () { pending = false; if (glReady()) sweep(); }, 50);
   }).observe(document.documentElement, { childList: true, subtree: true,
-                                         attributes: true, attributeFilter: ['data-markers'] });
+                                         attributes: true, attributeFilter: ['data-markers', 'data-route'] });
   // Un mapa que se creó oculto (0 px) se inicia en cuanto aparece.
-  setInterval(function () { if (typeof mapboxgl !== 'undefined') sweep(); }, 1000);
-  (function wait() { if (typeof mapboxgl === 'undefined') { setTimeout(wait, 150); return; } sweep(); })();
+  setInterval(function () { if (glReady()) sweep(); }, 1000);
+  (function wait() { if (!glReady()) { setTimeout(wait, 150); return; } sweep(); })();
 })();
 </script>
 """, shared=True)
 
 
-def MapView(cameras=None, detections=None, selected=None, on_select=None, height=None):
-    """Mapa blanco de México (Mapbox) con las cámaras. Devuelve el contenedor."""
+ROUTE_LEGEND = [('Validada', '#2f7a55'), ('Posible', '#c8891c'), ('Evento', '#b4544c'),
+                ('Reaparición', '#8e44ad'), ('Última posición', '#c0392b')]
+
+
+def MapView(cameras=None, detections=None, selected=None, on_select=None, height=None, route=None):
+    """Mapa blanco de México (Mapbox) con las cámaras. Devuelve el contenedor.
+
+    `route` (services/route_service.Route) dibuja además el trayecto estimado: paradas
+    numeradas en orden, tramos con su dirección y la última posición conocida.
+    """
     px_height = height if height else 500
     with ui.element('div').classes('map-stage').style(
         f'height:{px_height}px; position:relative; '
@@ -444,25 +675,41 @@ def MapView(cameras=None, detections=None, selected=None, on_select=None, height
         container.props['data-token'] = config.MAPBOX_TOKEN
         container.props['data-selected'] = selected or ''
         update_map(container, cameras, detections, selected)
+        update_route(container, route)
 
         # Legend overlay
         with ui.element('div').classes('map-legend'):
-            for label, color in [('En línea', '#00F0FF'), ('Alerta', '#FF3D71'),
-                                  ('Coincidencia', '#FFB800'), ('Desconectada', '#7C8B9A'),
-                                  ('Tu ubicación', '#0088FF')]:
+            legend = ROUTE_LEGEND if route is not None else [
+                ('En línea', '#00F0FF'), ('Alerta', '#FF3D71'), ('Coincidencia', '#FFB800'),
+                ('Desconectada', '#7C8B9A'), ('Tu ubicación', '#0088FF')]
+            for label, color in legend:
                 with ui.element('div').classes('map-legend-item'):
                     ui.element('div').classes('map-legend-dot').style(
                         f'background:{color}; --dot-glow:{color}80;')
                     ui.label(label)
 
-        ui.label('MAPA INTERACTIVO · MÉXICO').classes('map-note').style(
-            'position:absolute;bottom:10px;right:10px;z-index:1000;')
+        ui.label('TRAYECTO ESTIMADO · REQUIERE VALIDACIÓN' if route is not None else 'MAPA INTERACTIVO · MÉXICO') \
+            .classes('map-note').style('position:absolute;bottom:10px;right:10px;z-index:1000;')
     return container
 
 
 def update_map(container, cameras=None, detections=None, selected=None):
     """New marker data for an existing map: the markers change, the map and its view stay."""
     container.props['data-markers'] = json.dumps(markers(cameras, detections, selected))
+
+
+def update_route(container, route):
+    """Nuevo trayecto para un mapa existente: se redibuja sin recrear el mapa ni perder la vista.
+
+    Devuelve True si el trayecto cambió (para que la página refresque sólo lo necesario).
+    """
+    from services.route_service import route_payload
+    payload = json.dumps(route_payload(route)) if route is not None else 'null'
+    if container.props.get('data-route') == payload:
+        return False
+    container.props['data-route'] = payload
+    container.update()
+    return True
 
 
 def markers(cameras=None, detections=None, selected=None):

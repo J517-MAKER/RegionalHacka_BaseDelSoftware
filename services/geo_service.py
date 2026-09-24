@@ -35,6 +35,19 @@ GAZETTEER = {
     'tlaxcala': (19.31810, -98.23750), 'reynosa': (26.09230, -98.27770), 'matamoros': (25.86970, -97.50270),
     'nuevo laredo': (27.47790, -99.51550), 'ensenada': (31.86670, -116.59640),
 }
+# Cómo se escribe cada lugar al mostrarlo (el catálogo se compara sin acentos ni mayúsculas).
+PLACE_NAMES = {
+    'tec de nuevo leon': 'Tec de Nuevo León', 'tecnologico de nuevo leon': 'Tecnológico de Nuevo León',
+    'macroplaza': 'Macroplaza, Monterrey', 'fundidora': 'Parque Fundidora, Monterrey',
+    'plaza de la republica': 'Plaza de la República, CDMX', 'monumento a la revolucion': 'Monumento a la Revolución, CDMX',
+    'zocalo': 'Zócalo, CDMX', 'plaza de la constitucion': 'Plaza de la Constitución, CDMX',
+    'alameda central': 'Alameda Central, CDMX', 'bellas artes': 'Bellas Artes, CDMX',
+    'ciudad de mexico': 'Ciudad de México', 'cdmx': 'Ciudad de México', 'guadalupe': 'Guadalupe, N. L.',
+    'san nicolas de los garza': 'San Nicolás de los Garza', 'san pedro garza garcia': 'San Pedro Garza García',
+    'leon': 'León', 'queretaro': 'Querétaro', 'merida': 'Mérida', 'cancun': 'Cancún',
+    'ciudad juarez': 'Ciudad Juárez', 'culiacan': 'Culiacán', 'mazatlan': 'Mazatlán',
+    'san luis potosi': 'San Luis Potosí', 'torreon': 'Torreón', 'tuxtla gutierrez': 'Tuxtla Gutiérrez',
+}
 
 
 def plain(text):
@@ -95,7 +108,7 @@ def resolve_place(text):
         if re.search(r'\b' + re.escape(place) + r'\b', needle) and (best is None or len(place) > len(best[0])):
             best = (place, lat, lng)
     if best:
-        return best[1], best[2], best[0].title()
+        return best[1], best[2], PLACE_NAMES.get(best[0], best[0].title())
     return None
 
 

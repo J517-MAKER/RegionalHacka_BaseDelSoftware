@@ -57,6 +57,10 @@ class AlertImportRecord:
     face_matches: list = field(default_factory=list)
     text_matches: list = field(default_factory=list)
     context_matches: list = field(default_factory=list)
+    # La ficha contra lo que las cámaras ya guardaron (eventos, detecciones, base compartida).
+    camera_matches: list = field(default_factory=list)
+    camera_match_status: str = 'PENDIENTE'
+    reference_profile: object = None
 
     linked_case_id: str | None = None
     review_status: str = 'PENDIENTE_VALIDACION'

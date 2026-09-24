@@ -8,6 +8,7 @@ from services.cases_service import get_case,add_case_photo
 from services.users_service import can
 from services.tracking_service import get_tracking_history
 from services.facial_service import get_matches
+from services.route_service import case_route
 from components.search_results import SearchResults
 
 
@@ -46,8 +47,11 @@ def case_detail_page(case_id:str):
                     ui.upload(label='Añadir referencia de prueba',on_upload=upload,auto_upload=True,max_file_size=5*1024*1024,
                               on_rejected=lambda:ui.notify('Imagen rechazada. Máximo 5 MB.',type='warning')).props('accept=.png,.jpg,.jpeg,.webp flat bordered').classes('w-full')
             with ui.column().classes('w-full gap-5'):
-                with Panel('Mapa de detecciones',f'{len(events)} DETECCIONES'):
-                    MapView(detections=events,height=350)
+                route=case_route(case_id)
+                last=route.last_point if route else None
+                with Panel('Trayecto y última posición',
+                           f'ÚLTIMA: {last.camera_id} · {last.last_seen[11:]}' if last else f'{len(events)} DETECCIONES'):
+                    MapView(detections=events,height=350,route=route if last else None)
                 with Panel('Secuencia de detecciones','REVISIÓN INDIVIDUAL'):
                     with ui.column().classes('panel-body'):
                         Timeline(events,on_review=review)
