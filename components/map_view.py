@@ -96,8 +96,13 @@ ui.add_head_html("""
 
   /* ── Map container border ── */
   .nexo-map {
+    position: absolute;
+    inset: 0;
+    width: 100% !important;
+    height: 100% !important;
+    box-sizing: border-box;
     border: 2px solid rgb(50,120,138);
-    box-shadow: none;
+    border-radius: 12px;
   }
 
   /* ── Navigation controls light styling ── */
@@ -174,12 +179,36 @@ ui.add_head_html("""
 </style>
 """, shared=True)
 
-# ── Body HTML: map bootstrap with dark style ────────────────────────────────
+# ── Body HTML: map bootstrap with white style ────────────────────────────────
 ui.add_body_html("""
 <script>
 (function () {
   var MEXICO = [[-118.407986, 14.532098], [-86.710405, 32.718655]];
   var views = {}, maps = new Set(), position = null, asked = false;
+
+  var CARTO_LIGHT = {
+    version: 8,
+    sources: {
+      'carto-light': {
+        type: 'raster',
+        tiles: [
+          'https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
+          'https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
+          'https://c.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
+          'https://d.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png'
+        ],
+        tileSize: 256,
+        attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
+      }
+    },
+    layers: [{
+      id: 'carto-light-tiles',
+      type: 'raster',
+      source: 'carto-light',
+      minzoom: 0,
+      maxzoom: 20
+    }]
+  };
 
   function userMarker(map) {
     if (!position) return;
@@ -187,7 +216,7 @@ ui.add_body_html("""
     dot.className = 'mapbox-marker-user';
     new mapboxgl.Marker(dot).setLngLat([position.lng, position.lat])
       .setPopup(new mapboxgl.Popup({ offset: 15 }).setHTML(
-        '<b>📍 Tu ubicación actual</b><br><span style="color:#94A3B8">Precisión: ' + position.accuracy + ' m</span>'))
+        '<b>📍 Tu ubicación actual</b><br><span style="color:#64748B">Precisión: ' + position.accuracy + ' m</span>'))
       .addTo(map);
   }
 
@@ -202,8 +231,8 @@ ui.add_body_html("""
       var marker = new mapboxgl.Marker(dot).setLngLat([m.lng, m.lat])
         .setPopup(new mapboxgl.Popup({ offset: 25 }).setHTML(
           '<b>' + statusIcon + ' ' + m.id + '</b><br>' +
-          '<span style="color:#CBD5E1">' + m.name + '</span><br>' +
-          '<span style="color:' + m.color + ';text-shadow:0 0 6px ' + m.color + '50">' + m.status + '</span>'))
+          '<span style="color:#334155">' + m.name + '</span><br>' +
+          '<span style="color:' + m.color + ';font-weight:600;">' + m.status + '</span>'))
         .addTo(el._nexoMap);
       if (m.selected) marker.togglePopup();
       return marker;
@@ -217,48 +246,71 @@ ui.add_body_html("""
     var key = location.pathname + location.search + '|' + (el.dataset.selected || '');
     var view = views[key] || (selected ? { center: [selected.lng, selected.lat], zoom: 10 }
                                        : { center: [-102.5528, 23.6345], zoom: 4.5 });
-    mapboxgl.accessToken = el.dataset.token;
-    var map = new mapboxgl.Map({ container: el, style: 'mapbox://styles/mapbox/light-v11',
-                                 center: view.center, zoom: view.zoom, maxBounds: MEXICO });
+    
+    var token = el.dataset.token && el.dataset.token.trim().length > 10 ? el.dataset.token.trim() : null;
+    if (token) {
+      mapboxgl.accessToken = token;
+    }
+    var mapStyle = token ? 'mapbox://styles/mapbox/light-v11' : CARTO_LIGHT;
+
+    var map = new mapboxgl.Map({
+      container: el,
+      style: mapStyle,
+      center: view.center,
+      zoom: view.zoom,
+      maxBounds: MEXICO
+    });
     el._nexoMap = map;
     maps.add(el);
     map.addControl(new mapboxgl.NavigationControl(), 'top-right');
     map.on('moveend', function () { views[key] = { center: map.getCenter().toArray(), zoom: map.getZoom() }; });
 
-    // Add Mexico border glow effect on load
+    // Handle map resize on load & timers
+    function forceResize() {
+      try { if (map) map.resize(); } catch(e) {}
+    }
     map.on('load', function() {
-      map.addSource('mexico-border', {
-        type: 'geojson',
-        data: {
-          type: 'Feature',
-          geometry: {
-            type: 'Polygon',
-            coordinates: [[
-              [-117.12, 32.53], [-114.72, 32.72], [-111.07, 31.33], [-108.21, 31.33],
-              [-106.45, 31.75], [-104.98, 30.60], [-103.30, 28.97], [-102.40, 29.76],
-              [-101.40, 29.77], [-100.08, 28.14], [-99.10, 26.39], [-97.14, 25.97],
-              [-97.14, 22.88], [-94.81, 18.51], [-92.23, 14.55], [-90.60, 13.93],
-              [-88.62, 15.86], [-87.40, 15.60], [-86.71, 17.55], [-87.43, 20.23],
-              [-87.53, 21.47], [-90.35, 21.02], [-91.74, 18.68], [-93.55, 18.43],
-              [-96.04, 19.07], [-96.56, 19.87], [-97.56, 22.01], [-105.23, 20.63],
-              [-105.64, 22.00], [-108.40, 25.17], [-109.94, 27.53], [-112.16, 29.01],
-              [-114.57, 31.93], [-117.12, 32.53]
-            ]]
+      forceResize();
+      try {
+        map.addSource('mexico-border', {
+          type: 'geojson',
+          data: {
+            type: 'Feature',
+            geometry: {
+              type: 'Polygon',
+              coordinates: [[
+                [-117.12, 32.53], [-114.72, 32.72], [-111.07, 31.33], [-108.21, 31.33],
+                [-106.45, 31.75], [-104.98, 30.60], [-103.30, 28.97], [-102.40, 29.76],
+                [-101.40, 29.77], [-100.08, 28.14], [-99.10, 26.39], [-97.14, 25.97],
+                [-97.14, 22.88], [-94.81, 18.51], [-92.23, 14.55], [-90.60, 13.93],
+                [-88.62, 15.86], [-87.40, 15.60], [-86.71, 17.55], [-87.43, 20.23],
+                [-87.53, 21.47], [-90.35, 21.02], [-91.74, 18.68], [-93.55, 18.43],
+                [-96.04, 19.07], [-96.56, 19.87], [-97.56, 22.01], [-105.23, 20.63],
+                [-105.64, 22.00], [-108.40, 25.17], [-109.94, 27.53], [-112.16, 29.01],
+                [-114.57, 31.93], [-117.12, 32.53]
+              ]]
+            }
           }
-        }
-      });
-      map.addLayer({
-        id: 'mexico-border-glow',
-        type: 'line',
-        source: 'mexico-border',
-        paint: {
-          'line-color': '#32788A',
-          'line-width': 2,
-          'line-opacity': 0.6,
-          'line-blur': 2
-        }
-      });
+        });
+        map.addLayer({
+          id: 'mexico-border-glow',
+          type: 'line',
+          source: 'mexico-border',
+          paint: {
+            'line-color': '#32788A',
+            'line-width': 2.5,
+            'line-opacity': 0.7,
+            'line-blur': 1
+          }
+        });
+      } catch(err) {
+        console.warn('Border layer error:', err);
+      }
     });
+
+    setTimeout(forceResize, 150);
+    setTimeout(forceResize, 500);
+    setTimeout(forceResize, 1000);
 
     drawMarkers(el);
     userMarker(map);
